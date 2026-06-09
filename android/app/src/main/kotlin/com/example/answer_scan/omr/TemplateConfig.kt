@@ -62,7 +62,9 @@ object TemplateConfig {
 
     const val MORPH_OPEN_SIZE = 3
 
-    const val MARKER_MIN_AREA_FRAC      = 0.0002
+    // Small/perspective markers in 1200x1600 gallery photos can fall just below
+    // 0.0002 (about 384 px), while still being perfectly readable.
+    const val MARKER_MIN_AREA_FRAC      = 0.0001
     const val MARKER_MAX_AREA_FRAC      = 0.045
     const val MARKER_MIN_SOLIDITY       = 0.68
     const val MARKER_MIN_DENSITY        = 0.50

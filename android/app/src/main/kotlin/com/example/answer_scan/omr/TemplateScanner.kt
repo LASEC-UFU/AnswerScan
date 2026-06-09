@@ -88,20 +88,12 @@ class TemplateScanner {
             )
             Core.bitwise_or(markerBinary, otsuBinary, markerBinary)
 
-            var markers = markerDetector.detect(markerBinary, oriented.width(), oriented.height())
-            var flippedForDetection = false
-            if (markers == null) {
-                Log.d(TAG, "Markers not found in original orientation, trying 180°")
-                val rotated180Binary = Mat()
-                Core.rotate(markerBinary, rotated180Binary, Core.ROTATE_180)
-                markers = markerDetector.detect(rotated180Binary, oriented.width(), oriented.height())
-                rotated180Binary.release()
-                if (markers != null) {
-                    val tmpOriented = Mat(); Core.rotate(oriented,     tmpOriented, Core.ROTATE_180); tmpOriented.copyTo(oriented);     tmpOriented.release()
-                    val tmpBlurred  = Mat(); Core.rotate(blurred,      tmpBlurred,  Core.ROTATE_180); tmpBlurred.copyTo(blurred);       tmpBlurred.release()
-                    val tmpBinary   = Mat(); Core.rotate(markerBinary, tmpBinary,   Core.ROTATE_180); tmpBinary.copyTo(markerBinary);   tmpBinary.release()
-                    flippedForDetection = true
-                }
+            val detection = detectBestOrientation(markerBinary)
+            val markers = detection?.markers
+            if (detection?.rotationCode != null) {
+                rotateInPlace(oriented, detection.rotationCode)
+                rotateInPlace(blurred, detection.rotationCode)
+                rotateInPlace(markerBinary, detection.rotationCode)
             }
 
             if (markers == null) {
@@ -187,7 +179,8 @@ class TemplateScanner {
                     "warpBlockSize"     to blockSize,
                     "warpWidth"         to warped.width(),
                     "warpHeight"        to warped.height(),
-                    "rotated180"        to (rotated180 || flippedForDetection),
+                    "rotated180"        to rotated180,
+                    "detectionRotation" to (detection?.rotationDegrees ?: 0),
                 ),
             )
 
@@ -365,6 +358,44 @@ class TemplateScanner {
         }
     }
 
+    private fun detectBestOrientation(binary: Mat): DetectionOrientation? {
+        val options = listOf(
+            null to 0,
+            Core.ROTATE_90_CLOCKWISE to 90,
+            Core.ROTATE_180 to 180,
+            Core.ROTATE_90_COUNTERCLOCKWISE to 270,
+        )
+        var best: DetectionOrientation? = null
+
+        for ((rotationCode, degrees) in options) {
+            val candidateBinary = Mat()
+            try {
+                if (rotationCode == null) binary.copyTo(candidateBinary)
+                else Core.rotate(binary, candidateBinary, rotationCode)
+
+                val markers = markerDetector.detect(
+                    candidateBinary,
+                    candidateBinary.width(),
+                    candidateBinary.height(),
+                ) ?: continue
+                val candidate = DetectionOrientation(markers, rotationCode, degrees)
+                if (best == null || markers.qualityScore > best.markers.qualityScore) {
+                    best = candidate
+                }
+            } finally {
+                candidateBinary.release()
+            }
+        }
+        return best
+    }
+
+    private fun rotateInPlace(mat: Mat, rotationCode: Int) {
+        val rotated = Mat()
+        Core.rotate(mat, rotated, rotationCode)
+        rotated.copyTo(mat)
+        rotated.release()
+    }
+
     private fun validateTemplate(corners: List<Point>, imgW: Int, imgH: Int): ValidationFailure? {
         val topWidth    = distance(corners[0], corners[1])
         val bottomWidth = distance(corners[2], corners[3])
@@ -402,4 +433,9 @@ class TemplateScanner {
     private fun releaseAll(vararg mats: Mat) = mats.forEach { it.release() }
 
     private data class ValidationFailure(val message: String, val sheetStatus: String)
+    private data class DetectionOrientation(
+        val markers: MarkerDetector.DetectedMarkers,
+        val rotationCode: Int?,
+        val rotationDegrees: Int,
+    )
 }
