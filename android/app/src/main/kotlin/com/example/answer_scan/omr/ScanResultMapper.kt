@@ -130,12 +130,16 @@ class ScanResultMapper {
         val gap         = bestScore - secondScore
         val ratio       = if (secondScore <= 0.001) Double.MAX_VALUE else bestScore / secondScore
 
-        if (bestScore < blankThresh) {
+        if (bestScore < blankThresh ||
+            (gap < TemplateConfig.DOMINANCE_DELTA && secondScore < multiThresh)
+        ) {
             val confidence = 1.0 - (bestScore / blankThresh).coerceIn(0.0, 1.0)
             return QuestionResult(ANSWER_BLANK, confidence, rowScores)
         }
 
-        if (secondScore >= multiThresh) {
+        if (secondScore >= multiThresh &&
+            gap < TemplateConfig.DOMINANCE_DELTA * 1.5
+        ) {
             val confidence = ((bestScore + secondScore) / 2.0).coerceIn(0.0, 1.0)
             return QuestionResult(ANSWER_MULTIPLE, confidence, rowScores)
         }
@@ -158,17 +162,6 @@ class ScanResultMapper {
     }
 
     private fun resolveThresholds(noiseFloor: Double): ThresholdSet {
-        if (noiseFloor >= 0.005) {
-            return ThresholdSet(
-                blank = (noiseFloor * TemplateConfig.ADAPTIVE_BLANK_MULT)
-                    .coerceIn(TemplateConfig.BLANK_THRESHOLD * 0.4, TemplateConfig.BLANK_THRESHOLD * 2.0),
-                fill = (noiseFloor * TemplateConfig.ADAPTIVE_FILL_MULT)
-                    .coerceIn(TemplateConfig.FILL_THRESHOLD * 0.4, TemplateConfig.FILL_THRESHOLD * 2.0),
-                multiple = (noiseFloor * TemplateConfig.ADAPTIVE_MULTI_MULT)
-                    .coerceIn(TemplateConfig.MULTIPLE_THRESHOLD * 0.4, TemplateConfig.MULTIPLE_THRESHOLD * 2.0),
-            )
-        }
-
         return ThresholdSet(
             blank = TemplateConfig.BLANK_THRESHOLD,
             fill = TemplateConfig.FILL_THRESHOLD,

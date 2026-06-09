@@ -88,20 +88,12 @@ class TemplateScanner {
             )
             Core.bitwise_or(markerBinary, otsuBinary, markerBinary)
 
-            var markers = markerDetector.detect(markerBinary, oriented.width(), oriented.height())
-            var flippedForDetection = false
-            if (markers == null) {
-                Log.d(TAG, "Markers not found in original orientation, trying 180°")
-                val rotated180Binary = Mat()
-                Core.rotate(markerBinary, rotated180Binary, Core.ROTATE_180)
-                markers = markerDetector.detect(rotated180Binary, oriented.width(), oriented.height())
-                rotated180Binary.release()
-                if (markers != null) {
-                    val tmpOriented = Mat(); Core.rotate(oriented,     tmpOriented, Core.ROTATE_180); tmpOriented.copyTo(oriented);     tmpOriented.release()
-                    val tmpBlurred  = Mat(); Core.rotate(blurred,      tmpBlurred,  Core.ROTATE_180); tmpBlurred.copyTo(blurred);       tmpBlurred.release()
-                    val tmpBinary   = Mat(); Core.rotate(markerBinary, tmpBinary,   Core.ROTATE_180); tmpBinary.copyTo(markerBinary);   tmpBinary.release()
-                    flippedForDetection = true
-                }
+            val detection = detectBestOrientation(markerBinary)
+            val markers = detection?.markers
+            if (detection?.rotationCode != null) {
+                rotateInPlace(oriented, detection.rotationCode)
+                rotateInPlace(blurred, detection.rotationCode)
+                rotateInPlace(markerBinary, detection.rotationCode)
             }
 
             if (markers == null) {
@@ -158,7 +150,7 @@ class TemplateScanner {
             Imgproc.morphologyEx(warpBinary, cleanBinary, Imgproc.MORPH_OPEN, openKernel)
             openKernel.release()
 
-            val (scores, noiseFloor) = answerReader.scoreAllCells(cleanBinary)
+            val (scores, noiseFloor) = answerReader.scoreAllCells(warped)
             Log.d(TAG, "Noise floor (P25 cell scores)=${"%.4f".format(noiseFloor)}")
             val classification = resultMapper.classifyAll(scores, noiseFloor)
 
@@ -187,7 +179,8 @@ class TemplateScanner {
                     "warpBlockSize"     to blockSize,
                     "warpWidth"         to warped.width(),
                     "warpHeight"        to warped.height(),
-                    "rotated180"        to (rotated180 || flippedForDetection),
+                    "rotated180"        to rotated180,
+                    "detectionRotation" to (detection?.rotationDegrees ?: 0),
                 ),
             )
 
@@ -327,29 +320,34 @@ class TemplateScanner {
                 gray, binary, 0.0, 255.0,
                 Imgproc.THRESH_BINARY_INV + Imgproc.THRESH_OTSU,
             )
-            val lw = TemplateConfig.LABEL_W
-            val hh = TemplateConfig.HEADER_H
-            val ww = TemplateConfig.WARP_W
-            val wh = TemplateConfig.WARP_H
-            val top    = bandDensity(binary, lw,      0,       ww - lw, hh)
-            val left   = bandDensity(binary, 0,       hh,      lw,      wh - hh)
-            val bottom = bandDensity(binary, lw,      wh - hh, ww - lw, hh)
-            val right  = bandDensity(binary, ww - lw, hh,      lw,      wh - hh)
-            return (top * 1.4 + left * 1.2) - (bottom * 0.7 + right * 0.7)
+
+            var borderDensitySum = 0.0
+            var cells = 0
+            for (col in 0 until TemplateConfig.N_COLS) {
+                for (row in 0 until TemplateConfig.N_ROWS) {
+                    val rect = gridMapper.getFullCellRect(col, row)
+                    val inset = 7
+                    val outer = binary.submat(rect.y1, rect.y2, rect.x1, rect.x2)
+                    val inner = binary.submat(
+                        rect.y1 + inset,
+                        rect.y2 - inset,
+                        rect.x1 + inset,
+                        rect.x2 - inset,
+                    )
+                    val borderPixels = outer.rows() * outer.cols() - inner.rows() * inner.cols()
+                    if (borderPixels > 0) {
+                        val borderInk = Core.countNonZero(outer) - Core.countNonZero(inner)
+                        borderDensitySum += borderInk.toDouble() / borderPixels
+                        cells++
+                    }
+                    outer.release()
+                    inner.release()
+                }
+            }
+            return if (cells == 0) 0.0 else borderDensitySum / cells
         } finally {
             binary.release()
         }
-    }
-
-    private fun bandDensity(binary: Mat, x: Int, y: Int, width: Int, height: Int): Double {
-        val safeX = x.coerceIn(0, binary.cols() - 1)
-        val safeY = y.coerceIn(0, binary.rows() - 1)
-        val safeW = width.coerceIn(1, binary.cols() - safeX)
-        val safeH = height.coerceIn(1, binary.rows() - safeY)
-        val roi = binary.submat(safeY, safeY + safeH, safeX, safeX + safeW)
-        val density = Core.countNonZero(roi).toDouble() / (safeW * safeH)
-        roi.release()
-        return density
     }
 
     private fun computeSharpnessVariance(gray: Mat): Double {
@@ -363,6 +361,44 @@ class TemplateScanner {
         } finally {
             lap.release(); mean.release(); stdDev.release()
         }
+    }
+
+    private fun detectBestOrientation(binary: Mat): DetectionOrientation? {
+        val options = listOf(
+            null to 0,
+            Core.ROTATE_90_CLOCKWISE to 90,
+            Core.ROTATE_180 to 180,
+            Core.ROTATE_90_COUNTERCLOCKWISE to 270,
+        )
+        var best: DetectionOrientation? = null
+
+        for ((rotationCode, degrees) in options) {
+            val candidateBinary = Mat()
+            try {
+                if (rotationCode == null) binary.copyTo(candidateBinary)
+                else Core.rotate(binary, candidateBinary, rotationCode)
+
+                val markers = markerDetector.detect(
+                    candidateBinary,
+                    candidateBinary.width(),
+                    candidateBinary.height(),
+                ) ?: continue
+                val candidate = DetectionOrientation(markers, rotationCode, degrees)
+                if (best == null || markers.qualityScore > best.markers.qualityScore) {
+                    best = candidate
+                }
+            } finally {
+                candidateBinary.release()
+            }
+        }
+        return best
+    }
+
+    private fun rotateInPlace(mat: Mat, rotationCode: Int) {
+        val rotated = Mat()
+        Core.rotate(mat, rotated, rotationCode)
+        rotated.copyTo(mat)
+        rotated.release()
     }
 
     private fun validateTemplate(corners: List<Point>, imgW: Int, imgH: Int): ValidationFailure? {
@@ -402,4 +438,9 @@ class TemplateScanner {
     private fun releaseAll(vararg mats: Mat) = mats.forEach { it.release() }
 
     private data class ValidationFailure(val message: String, val sheetStatus: String)
+    private data class DetectionOrientation(
+        val markers: MarkerDetector.DetectedMarkers,
+        val rotationCode: Int?,
+        val rotationDegrees: Int,
+    )
 }

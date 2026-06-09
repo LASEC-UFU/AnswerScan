@@ -45,11 +45,11 @@ object TemplateConfig {
     val CELL_H: Int get() = MIN_CELL_H
 
     // Static thresholds (used as fallback when noiseFloor is unavailable)
-    const val BLANK_THRESHOLD    = 0.07
-    const val FILL_THRESHOLD     = 0.18
-    const val MULTIPLE_THRESHOLD = 0.15
-    const val DOMINANCE_DELTA    = 0.06
-    const val GAP_RATIO          = 1.50
+    const val BLANK_THRESHOLD    = 0.275
+    const val FILL_THRESHOLD     = 0.275
+    const val MULTIPLE_THRESHOLD = 0.55
+    const val DOMINANCE_DELTA    = 0.118
+    const val GAP_RATIO          = 1.20
 
     // Adaptive multipliers applied to per-sheet noise floor (P25 of all 100 cell scores)
     const val ADAPTIVE_BLANK_MULT = 2.8
@@ -62,7 +62,9 @@ object TemplateConfig {
 
     const val MORPH_OPEN_SIZE = 3
 
-    const val MARKER_MIN_AREA_FRAC      = 0.0002
+    // Small/perspective markers in 1200x1600 gallery photos can fall just below
+    // 0.0002 (about 384 px), while still being perfectly readable.
+    const val MARKER_MIN_AREA_FRAC      = 0.0001
     const val MARKER_MAX_AREA_FRAC      = 0.045
     const val MARKER_MIN_SOLIDITY       = 0.68
     const val MARKER_MIN_DENSITY        = 0.50
@@ -73,4 +75,5 @@ object TemplateConfig {
     const val MIN_SHARPNESS_VARIANCE  = 12.0
     const val MIN_TEMPLATE_AREA_FRAC  = 0.12
     const val MAX_OPPOSITE_SIDE_RATIO = 1.85
+    const val MAX_OPPOSITE_SIDE_ANGLE_DEG = 18.0
 }

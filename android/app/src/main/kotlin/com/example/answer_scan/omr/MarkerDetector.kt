@@ -10,8 +10,12 @@ import org.opencv.core.Point
 import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
 import kotlin.math.abs
+import kotlin.math.acos
+import kotlin.math.exp
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.min
 
 class MarkerDetector {
 
@@ -43,6 +47,7 @@ class MarkerDetector {
         val tr: MarkerBox,
         val bl: MarkerBox,
         val br: MarkerBox,
+        val qualityScore: Double = 0.0,
     ) {
         val templateCorners: List<Point> by lazy {
             listOf(
@@ -144,6 +149,12 @@ class MarkerDetector {
         Log.d(TAG, "Marker candidates: ${candidates.size}")
         if (candidates.size < 4) return null
 
+        val byGeometry = selectBestQuadrilateral(candidates, imgW, imgH)
+        if (byGeometry != null) {
+            Log.d(TAG, "Markers found via quadrilateral search (quality=${byGeometry.qualityScore})")
+            return byGeometry
+        }
+
         // Strategy 1: constrained corner-region search (MARKER_CORNER_REGION_FRAC = 0.45)
         val byCorner = selectByCornerRegions(candidates, imgW, imgH)
         if (byCorner != null) {
@@ -155,6 +166,94 @@ class MarkerDetector {
         // off-center framing, and variable zoom where markers exceed the corner region.
         Log.d(TAG, "Corner search exhausted, trying quadrant fallback")
         return selectByQuadrants(candidates, imgW, imgH)
+    }
+
+    private fun selectBestQuadrilateral(
+        candidates: List<MarkerBox>,
+        imgW: Int,
+        imgH: Int,
+    ): DetectedMarkers? {
+        var best: DetectedMarkers? = null
+        val imageArea = imgW.toDouble() * imgH
+        val targetAspect = TemplateConfig.WARP_W.toDouble() / TemplateConfig.WARP_H
+
+        for (a in 0 until candidates.size - 3) {
+            for (b in a + 1 until candidates.size - 2) {
+                for (c in b + 1 until candidates.size - 1) {
+                    for (d in c + 1 until candidates.size) {
+                        val group = listOf(candidates[a], candidates[b], candidates[c], candidates[d])
+                        val ordered = orderByImageCorners(group) ?: continue
+                        val tl = ordered[0]
+                        val tr = ordered[1]
+                        val bl = ordered[2]
+                        val br = ordered[3]
+
+                        val topWidth = distance(tl.center, tr.center)
+                        val bottomWidth = distance(bl.center, br.center)
+                        val leftHeight = distance(tl.center, bl.center)
+                        val rightHeight = distance(tr.center, br.center)
+                        val meanWidth = (topWidth + bottomWidth) / 2.0
+                        val meanHeight = (leftHeight + rightHeight) / 2.0
+                        if (meanHeight <= 0.0) continue
+
+                        val aspect = meanWidth / meanHeight
+                        val widthRatio = max(topWidth, bottomWidth) / max(1.0, min(topWidth, bottomWidth))
+                        val heightRatio = max(leftHeight, rightHeight) / max(1.0, min(leftHeight, rightHeight))
+                        val horizontalAngle = oppositeSideAngle(tl.center, tr.center, bl.center, br.center)
+                        val verticalAngle = oppositeSideAngle(tl.center, bl.center, tr.center, br.center)
+                        if (aspect !in 1.65..4.5 ||
+                            widthRatio > TemplateConfig.MAX_OPPOSITE_SIDE_RATIO ||
+                            heightRatio > TemplateConfig.MAX_OPPOSITE_SIDE_RATIO ||
+                            horizontalAngle > TemplateConfig.MAX_OPPOSITE_SIDE_ANGLE_DEG ||
+                            verticalAngle > TemplateConfig.MAX_OPPOSITE_SIDE_ANGLE_DEG
+                        ) continue
+
+                        val polygon = MatOfPoint(tl.center, tr.center, br.center, bl.center)
+                        val areaFraction = Imgproc.contourArea(polygon) / imageArea
+                        polygon.release()
+                        if (areaFraction < TemplateConfig.MIN_TEMPLATE_AREA_FRAC * 0.65) continue
+
+                        val markerAreas = group.map { it.bounds.area().toDouble() }
+                        val sizeSimilarity = markerAreas.minOrNull()!! / markerAreas.maxOrNull()!!
+                        val shapeQuality = group.map {
+                            (it.density + it.solidity + it.squareness) / 3.0
+                        }.average()
+                        val aspectQuality = exp(-abs(ln(aspect / targetAspect)))
+                        val quality = areaFraction *
+                            sizeSimilarity * sizeSimilarity * sizeSimilarity *
+                            shapeQuality *
+                            aspectQuality
+
+                        if (best == null || quality > best.qualityScore) {
+                            best = DetectedMarkers(tl, tr, bl, br, quality)
+                        }
+                    }
+                }
+            }
+        }
+        return best
+    }
+
+    private fun orderByImageCorners(group: List<MarkerBox>): List<MarkerBox>? {
+        val tl = group.minByOrNull { it.center.x + it.center.y } ?: return null
+        val br = group.maxByOrNull { it.center.x + it.center.y } ?: return null
+        val tr = group.maxByOrNull { it.center.x - it.center.y } ?: return null
+        val bl = group.minByOrNull { it.center.x - it.center.y } ?: return null
+        if (setOf(tl, tr, bl, br).size != 4) return null
+        return listOf(tl, tr, bl, br)
+    }
+
+    private fun distance(a: Point, b: Point): Double = hypot(a.x - b.x, a.y - b.y)
+
+    private fun oppositeSideAngle(a1: Point, a2: Point, b1: Point, b2: Point): Double {
+        val ax = a2.x - a1.x
+        val ay = a2.y - a1.y
+        val bx = b2.x - b1.x
+        val by = b2.y - b1.y
+        val denominator = hypot(ax, ay) * hypot(bx, by)
+        if (denominator <= 0.0) return 180.0
+        val cosine = ((ax * bx + ay * by) / denominator).coerceIn(-1.0, 1.0)
+        return Math.toDegrees(acos(cosine))
     }
 
     private fun selectByCornerRegions(
