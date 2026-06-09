@@ -87,10 +87,12 @@ class ScanReviewCard extends StatelessWidget {
     super.key,
     required this.session,
     this.onAnswerChanged,
+    this.questionCount,
   });
 
   final SheetScanSession session;
   final void Function(int question, String answer)? onAnswerChanged;
+  final int? questionCount;
 
   @override
   Widget build(BuildContext context) {
@@ -144,7 +146,7 @@ class ScanReviewCard extends StatelessWidget {
             const SizedBox(height: 12),
             Text('Respostas', style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 8),
-            ...List.generate(20, (index) {
+            ...List.generate(questionCount ?? 20, (index) {
               final question = index + 1;
               final answer = result.rawAnswers['$question'] ?? 'EM_BRANCO';
               final confidence = result.confidence['$question'] ?? 0;
@@ -158,15 +160,25 @@ class ScanReviewCard extends StatelessWidget {
                 trailing: onAnswerChanged == null
                     ? AnswerBadge(answer: answer)
                     : DropdownButton<String>(
-                        value: const ['A', 'B', 'C', 'D', 'E'].contains(answer)
+                        value:
+                            const [
+                              'A',
+                              'B',
+                              'C',
+                              'D',
+                              'E',
+                              'EM_BRANCO',
+                            ].contains(answer)
                             ? answer
                             : null,
                         hint: Text(answer),
-                        items: const ['A', 'B', 'C', 'D', 'E']
+                        items: const ['A', 'B', 'C', 'D', 'E', 'EM_BRANCO']
                             .map(
                               (option) => DropdownMenuItem(
                                 value: option,
-                                child: Text(option),
+                                child: Text(
+                                  option == 'EM_BRANCO' ? 'Em branco' : option,
+                                ),
                               ),
                             )
                             .toList(),

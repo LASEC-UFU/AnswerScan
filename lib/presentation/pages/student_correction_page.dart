@@ -9,6 +9,7 @@ import '../controllers/moodle_controller.dart';
 import '../widgets/scan_workflow_widgets.dart';
 import 'camera_capture_page.dart';
 import 'moodle_connect_page.dart';
+import 'manual_grade_page.dart';
 
 class StudentCorrectionPage extends StatefulWidget {
   const StudentCorrectionPage({
@@ -56,7 +57,13 @@ class _StudentCorrectionPageState extends State<StudentCorrectionPage> {
 
   Future<void> _grade() async {
     final result = widget.controller.grade();
-    if (result == null || !widget.moodleController.isReadyToSubmit) return;
+    if (result == null) return;
+    if (!widget.moodleController.isFullyConfigured) return;
+    if (!widget.moodleController.isReadyToSubmit) return;
+    if (widget.moodleController.selectedStudentGrade?.isManual == true) {
+      final replace = await _confirmManualGradeOverwrite();
+      if (!replace) return;
+    }
     final activity = widget.moodleController.selectedGradeItem!;
     final student = widget.moodleController.selectedStudent!;
     final calculated =
@@ -68,10 +75,38 @@ class _StudentCorrectionPageState extends State<StudentCorrectionPage> {
       correctAnswers: result.correctAnswers,
       totalQuestions: result.totalQuestions,
       gradeOverride: grade,
+      source: (grade - calculated).abs() > 0.0001
+          ? MoodleGradeSource.manual
+          : MoodleGradeSource.automatic,
     );
     if (ok) {
       widget.moodleController.selectStudent(null);
     }
+  }
+
+  Future<bool> _confirmManualGradeOverwrite() async {
+    final grade = widget.moodleController.selectedStudentGrade?.value ?? 0;
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Nota manual existente'),
+            content: Text(
+              'Este aluno possui a nota manual ${grade.toStringAsFixed(2)}. '
+              'Deseja manter essa nota ou substituí-la pela nota calculada?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Manter nota manual'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Substituir'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<double?> _reviewGrade(
@@ -149,6 +184,19 @@ class _StudentCorrectionPageState extends State<StudentCorrectionPage> {
                 ),
               ),
             ),
+            if (widget.moodleController.isFullyConfigured) ...[
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        ManualGradePage(controller: widget.moodleController),
+                  ),
+                ),
+                icon: const Icon(Icons.edit_note),
+                label: const Text('Lançar ou editar nota manual'),
+              ),
+            ],
             const SizedBox(height: 12),
             ScanSourceCard(
               title: 'Capturar ou selecionar folha do aluno',
@@ -169,13 +217,17 @@ class _StudentCorrectionPageState extends State<StudentCorrectionPage> {
             ],
             if (session != null) ...[
               const SizedBox(height: 12),
-              ScanReviewCard(session: session),
+              ScanReviewCard(
+                session: session,
+                questionCount: widget.controller.answerKeyQuestionCount,
+              ),
               const SizedBox(height: 12),
               FilledButton.icon(
                 onPressed:
                     widget.controller.isBusy ||
                         (widget.moodleController.isFullyConfigured &&
-                            !widget.moodleController.isReadyToSubmit)
+                            (!widget.moodleController.isReadyToSubmit ||
+                                widget.moodleController.isLoadingGrade))
                     ? null
                     : _grade,
                 icon: const Icon(Icons.done_all),
@@ -221,6 +273,12 @@ class _MoodleStudentCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text('Atividade: ${controller.selectedGradeItem!.name}'),
+            if (controller.selectedStudentGrade?.exists == true)
+              Text(
+                'Nota atual: '
+                '${controller.selectedStudentGrade!.value!.toStringAsFixed(2)}'
+                '${controller.selectedStudentGrade!.isManual ? ' (manual)' : ''}',
+              ),
             const SizedBox(height: 8),
             Autocomplete<MoodleStudent>(
               displayStringForOption: (student) => student.fullname,
@@ -259,7 +317,9 @@ class _DetailedResult extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final key = controller.answerKeyScan!.answerSheet.answers;
+    final key = controller.answerKeyScan!
+        .answerSheetWithQuestionCount(controller.answerKeyQuestionCount)
+        .answers;
     final student = controller.studentSheetScan!.answerSheet.answers;
     final result = controller.result!;
     return Card(
@@ -274,7 +334,7 @@ class _DetailedResult extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 10),
-            ...List.generate(20, (index) {
+            ...List.generate(result.totalQuestions, (index) {
               final answer = student[index];
               final correct = key[index];
               final isCorrect = answer != null && answer == correct;

@@ -90,6 +90,29 @@ O scanner passa a salvar uma imagem `_omr_debug.jpg` com:
 
 Tambem existe a tela `Diagnostico nativo` para capturar ou carregar uma folha e inspecionar o retorno completo do pipeline.
 
+## Lancamento de notas no Moodle
+
+O aplicativo suporta leitura e atualizacao direta de notas de atividades do
+tipo **Tarefa (Assignment)**. O fluxo utiliza:
+
+- `mod_assign_get_assignments` para listar as atividades.
+- `gradereport_user_get_grade_items` para buscar a nota exibida no livro.
+- `core_grades_update_grades` para lancamento direto no livro de notas.
+- `mod_assign_get_grades` e `mod_assign_save_grade` como compatibilidade para
+  Tarefas quando os endpoints diretos nao estiverem disponiveis.
+
+Para o fluxo recomendado, `gradereport_user_get_grade_items` e
+`core_grades_update_grades` devem estar disponiveis no Servico Externo usado
+pelo token, e o professor precisa ter permissao para atribuir notas. Depois de
+salvar, o aplicativo rele a nota no livro e somente confirma sucesso quando o
+valor persistido corresponde ao valor enviado.
+
+Itens manuais do livro de notas e atividades de outros modulos, como
+Questionario, nao usam `mod_assign_save_grade` e nao sao exibidos neste fluxo.
+Esses tipos exigem endpoints e permissoes diferentes. O painel
+`Diagnostico Moodle` na tela de nota manual mostra as chamadas, IDs, respostas
+e erros recebidos sem exibir o token de acesso.
+
 ## Pontos de calibracao do template
 
 ### Geometria do template

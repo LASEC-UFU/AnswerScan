@@ -8,4 +8,7 @@ class SheetScanSession {
   final OmrScanResult result;
 
   AnswerSheet get answerSheet => result.toAnswerSheet();
+
+  AnswerSheet answerSheetWithQuestionCount(int questionCount) =>
+      result.toAnswerSheet(questionCount: questionCount);
 }

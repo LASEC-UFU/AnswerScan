@@ -218,8 +218,9 @@ class _LoginForm extends StatelessWidget {
               border: OutlineInputBorder(),
               prefixIcon: Icon(Icons.settings_ethernet),
               helperText:
-                  'Para itens manuais: crie um Serviço Externo no Moodle\n'
-                  'com core_grades_update_grades e use o token deste serviço.',
+                  'Para ler e lançar notas diretamente: crie um Serviço '
+                  'Externo\ncom gradereport_user_get_grade_items e '
+                  'core_grades_update_grades.',
               helperMaxLines: 3,
             ),
           ),

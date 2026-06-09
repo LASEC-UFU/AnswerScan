@@ -225,15 +225,15 @@ class TemplateScanner {
      * [height]    frame height
      * [rowStride] bytes per row in [yPlane] (may be >= width due to padding)
      *
-     * Returns a flat list [x0,y0, x1,y1, x2,y2, x3,y3] for TL/TR/BL/BR, or
-     * null when no valid set of 4 markers is found.
+     * Returns the same corners and geometry confidence used by the full scan,
+     * or null when no valid set of 4 markers is found.
      */
     fun detectMarkersLive(
         yPlane: ByteArray,
         width: Int,
         height: Int,
         rowStride: Int,
-    ): List<Double>? {
+    ): Map<String, Any?>? {
         val gray        = Mat()
         val blurred     = Mat()
         val claheBlur   = Mat()
@@ -270,8 +270,39 @@ class TemplateScanner {
             )
             Core.bitwise_or(adaptive, otsuBin, combined)
 
-            val markers = markerDetector.detect(combined, width, height) ?: return null
-            return markers.templateCorners.flatMap { listOf(it.x, it.y) }
+            val detection = detectBestOrientation(combined) ?: return null
+            val markers = detection.markers
+            val detectedWidth = if (
+                detection.rotationCode == Core.ROTATE_90_CLOCKWISE ||
+                detection.rotationCode == Core.ROTATE_90_COUNTERCLOCKWISE
+            ) height else width
+            val detectedHeight = if (
+                detection.rotationCode == Core.ROTATE_90_CLOCKWISE ||
+                detection.rotationCode == Core.ROTATE_90_COUNTERCLOCKWISE
+            ) width else height
+            val geometry = measureGeometry(
+                markers.templateCorners,
+                detectedWidth,
+                detectedHeight,
+                markers.qualityScore,
+            )
+            val recoverable = validateTemplate(geometry) == null
+            val ready = recoverable && geometry.confidence >= 0.55
+            val originalFrameCorners = markers.templateCorners.map {
+                pointToOriginalFrame(
+                    it,
+                    detection.rotationCode,
+                    width,
+                    height,
+                )
+            }
+            return mapOf(
+                "corners" to originalFrameCorners.flatMap { listOf(it.x, it.y) },
+                "confidence" to geometry.confidence,
+                "state" to if (ready) "ready" else "adjusting",
+                "geometry" to geometry.toDebugMap(),
+                "rotation" to detection.rotationDegrees,
+            )
         } finally {
             releaseAll(gray, blurred, claheBlur, adaptive, otsuBin, combined)
         }
@@ -420,6 +451,27 @@ class TemplateScanner {
         Core.rotate(mat, rotated, rotationCode)
         rotated.copyTo(mat)
         rotated.release()
+    }
+
+    private fun pointToOriginalFrame(
+        point: Point,
+        rotationCode: Int?,
+        originalWidth: Int,
+        originalHeight: Int,
+    ): Point = when (rotationCode) {
+        Core.ROTATE_90_CLOCKWISE -> Point(
+            point.y,
+            originalHeight - 1.0 - point.x,
+        )
+        Core.ROTATE_180 -> Point(
+            originalWidth - 1.0 - point.x,
+            originalHeight - 1.0 - point.y,
+        )
+        Core.ROTATE_90_COUNTERCLOCKWISE -> Point(
+            originalWidth - 1.0 - point.y,
+            point.x,
+        )
+        else -> point
     }
 
     private fun validateTemplate(geometry: GeometryDiagnostics): ValidationFailure? {

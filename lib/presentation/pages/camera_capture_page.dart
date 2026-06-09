@@ -4,7 +4,6 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../core/omr_capture_guide.dart';
 import '../../data/services/omr_native_channel.dart';
 
 class CameraCapturePage extends StatefulWidget {
@@ -28,7 +27,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   bool _takingPhoto = false;
 
   // Live marker detection state
-  bool _markersFound = false;
+  bool _captureReady = false;
+  bool _sheetDetected = false;
+  double _detectionConfidence = 0;
   bool _streamActive = false;
   int _lastDetectionMs = 0;
   bool _processingFrame = false;
@@ -69,19 +70,47 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             height: image.height,
             rowStride: plane.bytesPerRow,
           )
-          .then((corners) {
+          .then((detection) {
             if (!mounted) return;
             setState(() {
-              _markersFound = corners != null;
-              _liveCorners = corners;
+              _sheetDetected = detection != null;
+              _captureReady = detection?.ready ?? false;
+              _detectionConfidence = detection?.confidence ?? 0;
+              _liveCorners = detection == null
+                  ? null
+                  : _smoothCorners(_liveCorners, detection.corners);
               _liveFrameWidth = image.width;
               _liveFrameHeight = image.height;
               _processingFrame = false;
             });
           })
           .catchError((_) {
+            if (mounted) {
+              setState(() {
+                _sheetDetected = false;
+                _captureReady = false;
+                _detectionConfidence = 0;
+                _liveCorners = null;
+              });
+            }
             _processingFrame = false;
           });
+    });
+  }
+
+  List<List<double>> _smoothCorners(
+    List<List<double>>? previous,
+    List<List<double>> current,
+  ) {
+    if (previous == null || previous.length != current.length) return current;
+    const currentWeight = 0.45;
+    return List.generate(current.length, (index) {
+      return [
+        previous[index][0] * (1 - currentWeight) +
+            current[index][0] * currentWeight,
+        previous[index][1] * (1 - currentWeight) +
+            current[index][1] * currentWeight,
+      ];
     });
   }
 
@@ -140,7 +169,29 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   }
 
   Widget _buildFullBleedPreview() {
-    return Center(child: CameraPreview(_cameraController));
+    return Center(
+      child: CameraPreview(
+        _cameraController,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            CustomPaint(
+              painter: _LiveCornersPainter(
+                corners: _liveCorners,
+                frameWidth: _liveFrameWidth,
+                frameHeight: _liveFrameHeight,
+                ready: _captureReady,
+              ),
+            ),
+            _DetectionStatus(
+              detected: _sheetDetected,
+              ready: _captureReady,
+              confidence: _detectionConfidence,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -177,26 +228,15 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final preview = ClipRect(
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                _buildFullBleedPreview(),
-                CustomPaint(
-                  painter: _LiveCornersPainter(
-                    corners: _liveCorners,
-                    frameWidth: _liveFrameWidth,
-                    frameHeight: _liveFrameHeight,
-                  ),
-                ),
-                _GuideOverlay(markersFound: _markersFound),
-              ],
-            ),
-          );
+          final preview = ClipRect(child: _buildFullBleedPreview());
 
           final captureButton = FloatingActionButton.large(
             onPressed: _takingPhoto ? null : _capture,
-            backgroundColor: _markersFound ? Colors.green : null,
+            backgroundColor: _captureReady
+                ? Colors.green
+                : _sheetDetected
+                ? Colors.amber.shade700
+                : null,
             child: _takingPhoto
                 ? const CircularProgressIndicator()
                 : const Icon(Icons.camera_alt),
@@ -242,11 +282,13 @@ class _LiveCornersPainter extends CustomPainter {
     required this.corners,
     required this.frameWidth,
     required this.frameHeight,
+    required this.ready,
   });
 
   final List<List<double>>? corners;
   final int frameWidth;
   final int frameHeight;
+  final bool ready;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -273,13 +315,14 @@ class _LiveCornersPainter extends CustomPainter {
       ..lineTo(mapped[3].dx, mapped[3].dy)
       ..lineTo(mapped[2].dx, mapped[2].dy)
       ..close();
+    final color = ready ? Colors.greenAccent : Colors.amberAccent;
     final stroke = Paint()
-      ..color = Colors.greenAccent
+      ..color = color
       ..style = PaintingStyle.stroke
       ..strokeWidth = 4;
     canvas.drawPath(path, stroke);
     final fill = Paint()
-      ..color = Colors.greenAccent
+      ..color = color
       ..style = PaintingStyle.fill;
     for (final point in mapped) {
       canvas.drawCircle(point, 9, fill);
@@ -290,142 +333,48 @@ class _LiveCornersPainter extends CustomPainter {
   bool shouldRepaint(_LiveCornersPainter oldDelegate) =>
       oldDelegate.corners != corners ||
       oldDelegate.frameWidth != frameWidth ||
-      oldDelegate.frameHeight != frameHeight;
+      oldDelegate.frameHeight != frameHeight ||
+      oldDelegate.ready != ready;
 }
 
-class _GuideOverlay extends StatelessWidget {
-  const _GuideOverlay({required this.markersFound});
+class _DetectionStatus extends StatelessWidget {
+  const _DetectionStatus({
+    required this.detected,
+    required this.ready,
+    required this.confidence,
+  });
 
-  final bool markersFound;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        double guideWidth = constraints.maxWidth * OMRCaptureGuide.widthFactor;
-        double guideHeight = guideWidth * OMRCaptureGuide.heightFromWidthFactor;
-
-        final maxHeight = constraints.maxHeight * 0.85;
-        if (guideHeight > maxHeight) {
-          guideHeight = maxHeight;
-          guideWidth = guideHeight / OMRCaptureGuide.heightFromWidthFactor;
-        }
-
-        return Center(
-          child: SizedBox(
-            width: guideWidth,
-            height: guideHeight,
-            child: Stack(
-              fit: StackFit.expand,
-              children: [
-                CustomPaint(painter: _GuidePainter(markersFound: markersFound)),
-                Align(
-                  alignment: Alignment.bottomCenter,
-                  child: Container(
-                    margin: const EdgeInsets.all(12),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.65),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      markersFound
-                          ? 'Marcadores detectados! Pressione para capturar.'
-                          : 'Alinhe os 4 marcadores pretos com os cantos do guia.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: markersFound ? Colors.greenAccent : Colors.white,
-                        fontWeight: markersFound
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _GuidePainter extends CustomPainter {
-  const _GuidePainter({required this.markersFound});
-
-  final bool markersFound;
+  final bool detected;
+  final bool ready;
+  final double confidence;
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final borderColor = markersFound ? Colors.greenAccent : Colors.white;
-
-    final borderPaint = Paint()
-      ..color = borderColor
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = markersFound ? 3.5 : 2.5;
-    final markerPaint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.85)
-      ..style = PaintingStyle.fill;
-    final answerAreaPaint = Paint()
-      ..color = markersFound
-          ? Colors.greenAccent.withValues(alpha: 0.6)
-          : Colors.white70
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-
-    canvas.drawRect(Offset.zero & size, borderPaint);
-
-    final markerSide = size.shortestSide * 0.085;
-    final markerInset = markerSide * 0.9;
-
-    final markers = [
-      Rect.fromLTWH(markerInset, markerInset, markerSide, markerSide),
-      Rect.fromLTWH(
-        size.width - markerInset - markerSide,
-        markerInset,
-        markerSide,
-        markerSide,
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.bottomCenter,
+    child: Container(
+      margin: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.68),
+        borderRadius: BorderRadius.circular(12),
       ),
-      Rect.fromLTWH(
-        markerInset,
-        size.height - markerInset - markerSide,
-        markerSide,
-        markerSide,
+      child: Text(
+        ready
+            ? 'Folha detectada. Pronto para capturar '
+                  '(${(confidence * 100).toStringAsFixed(0)}%).'
+            : detected
+            ? 'Folha detectada parcialmente. Ajuste o posicionamento.'
+            : 'Procurando os quatro marcadores da folha...',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: ready
+              ? Colors.greenAccent
+              : detected
+              ? Colors.amberAccent
+              : Colors.white,
+          fontWeight: ready ? FontWeight.bold : FontWeight.normal,
+        ),
       ),
-      Rect.fromLTWH(
-        size.width - markerInset - markerSide,
-        size.height - markerInset - markerSide,
-        markerSide,
-        markerSide,
-      ),
-    ];
-
-    for (final rect in markers) {
-      canvas.drawRect(rect, markerPaint);
-      if (markersFound) {
-        canvas.drawRect(
-          rect.inflate(3),
-          Paint()
-            ..color = Colors.greenAccent
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2,
-        );
-      }
-    }
-
-    final answerArea = Rect.fromLTWH(
-      size.width * 0.14,
-      size.height * 0.24,
-      size.width * 0.78,
-      size.height * 0.56,
-    );
-    canvas.drawRect(answerArea, answerAreaPaint);
-  }
-
-  @override
-  bool shouldRepaint(_GuidePainter old) => old.markersFound != markersFound;
+    ),
+  );
 }

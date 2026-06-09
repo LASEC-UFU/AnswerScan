@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../domain/entities/omr_scan_result.dart';
+import '../../domain/entities/answer_sheet.dart';
 import '../../domain/entities/sheet_scan_session.dart';
 import '../../domain/repositories/sheet_reader_repository.dart';
 import '../../domain/usecases/grade_exam_usecase.dart';
@@ -26,6 +27,7 @@ class CorrectionController extends ChangeNotifier {
   String? _studentMessage;
   String? _studentError;
   bool _answerKeyValidated = false;
+  int _answerKeyQuestionCount = AnswerSheet.maxQuestions;
   bool _isBusy = false;
 
   bool get isBusy => _isBusy;
@@ -39,6 +41,7 @@ class CorrectionController extends ChangeNotifier {
   String? get studentMessage => _studentMessage;
   String? get studentError => _studentError;
   bool get answerKeyValidated => _answerKeyValidated;
+  int get answerKeyQuestionCount => _answerKeyQuestionCount;
 
   bool get canGrade =>
       _answerKeyScan != null &&
@@ -55,6 +58,7 @@ class CorrectionController extends ChangeNotifier {
       onSuccess: (session) {
         _answerKeyScan = session;
         _answerKeyValidated = false;
+        _answerKeyQuestionCount = session.result.lastResolvedQuestion;
         _answerKeyMessage = _buildStatusMessage(session);
         _answerKeyError = null;
         _result = null;
@@ -91,16 +95,29 @@ class CorrectionController extends ChangeNotifier {
 
   Future<void> validateAnswerKey() async {
     if (_answerKeyScan == null) return;
-    if (_answerKeyScan!.result.unresolvedCount > 0) {
+    final result = _answerKeyScan!.result;
+    final total = result.lastResolvedQuestion;
+    if (total == 0) {
       _answerKeyValidated = false;
-      _answerKeyError =
-          'Revise todas as questões em branco, múltiplas ou ambíguas antes de salvar.';
+      _answerKeyError = 'Preencha pelo menos a primeira questão do gabarito.';
       notifyListeners();
       return;
     }
+    final invalid = result.answerKeyInvalidQuestions;
+    if (invalid.isNotEmpty) {
+      _answerKeyValidated = false;
+      _answerKeyError =
+          'Existem lacunas ou marcações inválidas em: '
+          '${invalid.map((question) => 'Q$question').join(', ')}.';
+      notifyListeners();
+      return;
+    }
+    _answerKeyQuestionCount = total;
     _answerKeyValidated = true;
     _answerKeyError = null;
-    _answerKeyMessage = 'Gabarito validado e salvo para correção.';
+    _answerKeyMessage =
+        'Gabarito validado com $_answerKeyQuestionCount questões. '
+        'As posições seguintes serão ignoradas.';
     final prefs = await SharedPreferences.getInstance();
     final session = _answerKeyScan!;
     await prefs.setString('answer_key_source_path', session.imagePath);
@@ -115,6 +132,7 @@ class CorrectionController extends ChangeNotifier {
         (index) => session.result.rawAnswers['${index + 1}'] ?? 'EM_BRANCO',
       ),
     );
+    await prefs.setInt('answer_key_question_count', _answerKeyQuestionCount);
     notifyListeners();
   }
 
@@ -123,6 +141,7 @@ class CorrectionController extends ChangeNotifier {
     final answers = prefs.getStringList('answer_key_answers');
     final sourcePath = prefs.getString('answer_key_source_path');
     final correctedPath = prefs.getString('answer_key_corrected_path');
+    final savedQuestionCount = prefs.getInt('answer_key_question_count');
     if (answers == null || answers.length != 20 || sourcePath == null) return;
     final rawAnswers = {
       for (var index = 0; index < answers.length; index++)
@@ -136,7 +155,10 @@ class CorrectionController extends ChangeNotifier {
         message: 'Gabarito salvo',
         sheetStatus: 'ok',
         rawAnswers: rawAnswers,
-        confidence: {for (var index = 1; index <= 20; index++) '$index': 1},
+        confidence: {
+          for (var index = 1; index <= AnswerSheet.maxQuestions; index++)
+            '$index': 1,
+        },
         scores: const {},
         questionDetails: const {},
         markersDetected: 4,
@@ -147,7 +169,14 @@ class CorrectionController extends ChangeNotifier {
       ),
     );
     _answerKeyValidated = true;
-    _answerKeyMessage = 'Gabarito salvo carregado.';
+    _answerKeyQuestionCount =
+        savedQuestionCount ??
+        _answerKeyScan!.result.lastResolvedQuestion.clamp(
+          1,
+          AnswerSheet.maxQuestions,
+        );
+    _answerKeyMessage =
+        'Gabarito salvo carregado com $_answerKeyQuestionCount questões.';
     notifyListeners();
   }
 
@@ -161,7 +190,9 @@ class CorrectionController extends ChangeNotifier {
     }
 
     _result = _gradeExamUseCase.execute(
-      answerKey: _answerKeyScan!.answerSheet,
+      answerKey: _answerKeyScan!.answerSheetWithQuestionCount(
+        _answerKeyQuestionCount,
+      ),
       studentSheet: _studentSheetScan!.answerSheet,
     );
     _statusMessage =
@@ -213,10 +244,10 @@ class CorrectionController extends ChangeNotifier {
     }
 
     final buffer = StringBuffer();
-    for (var question = 0; question < 20; question++) {
+    for (var question = 0; question < AnswerSheet.maxQuestions; question++) {
       final answer = session.result.rawAnswers['${question + 1}'] ?? '-';
       buffer.write('${question + 1}:$answer');
-      if (question < 19) {
+      if (question < AnswerSheet.maxQuestions - 1) {
         buffer.write('  ');
       }
     }

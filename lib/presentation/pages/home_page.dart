@@ -6,6 +6,7 @@ import '../controllers/moodle_controller.dart';
 import 'answer_key_page.dart';
 import 'calibration_page.dart';
 import 'moodle_connect_page.dart';
+import 'manual_grade_page.dart';
 import 'student_correction_page.dart';
 
 class HomePage extends StatelessWidget {
@@ -61,7 +62,7 @@ class HomePage extends StatelessWidget {
               description:
                   'Capture, corrija a perspectiva, revise respostas e salve o gabarito validado.',
               status: controller.answerKeyValidated
-                  ? 'Gabarito salvo e pronto'
+                  ? 'Gabarito salvo com ${controller.answerKeyQuestionCount} questões'
                   : controller.answerKeyScan != null
                   ? 'Gabarito lido, aguardando validação'
                   : 'Nenhum gabarito salvo',
@@ -92,6 +93,21 @@ class HomePage extends StatelessWidget {
                       ),
                     )
                   : null,
+            ),
+            const SizedBox(height: 12),
+            _FlowCard(
+              icon: Icons.edit_note,
+              title: 'Lançar ou editar nota manual',
+              description:
+                  'Selecione uma atividade e um aluno para registrar uma nota sem gabarito.',
+              status: moodleController.isFullyConfigured
+                  ? 'Atividade: ${moodleController.selectedGradeItem!.name}'
+                  : 'Configure o Moodle para lançar notas',
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => ManualGradePage(controller: moodleController),
+                ),
+              ),
             ),
             const SizedBox(height: 12),
             OutlinedButton.icon(

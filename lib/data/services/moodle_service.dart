@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../models/moodle_models.dart';
@@ -159,18 +160,86 @@ class MoodleService {
     return candidates.map(MoodleStudent.fromJson).toList();
   }
 
+  Future<double?> getStudentGrade({
+    required String baseUrl,
+    required String token,
+    required MoodleGradeItem item,
+    required int studentId,
+  }) async {
+    final data =
+        await _ws(baseUrl, token, 'mod_assign_get_grades', {
+              'assignmentids[0]': '${item.id}',
+            })
+            as Map<String, dynamic>;
+    return parseStudentGradeResponse(data, studentId);
+  }
+
+  Future<double?> getStudentGradebookGrade({
+    required String baseUrl,
+    required String token,
+    required int courseId,
+    required MoodleGradeItem item,
+    required int studentId,
+  }) async {
+    final data =
+        await _ws(baseUrl, token, 'gradereport_user_get_grade_items', {
+              'courseid': '$courseId',
+              'userid': '$studentId',
+            })
+            as Map<String, dynamic>;
+    return parseGradebookGradeResponse(data, item);
+  }
+
+  @visibleForTesting
+  double? parseGradebookGradeResponse(
+    Map<String, dynamic> data,
+    MoodleGradeItem item,
+  ) {
+    final userGrades = (data['usergrades'] as List?) ?? const [];
+    if (userGrades.isEmpty) return null;
+    final gradeItems =
+        ((userGrades.first as Map)['gradeitems'] as List?) ?? const [];
+    for (final raw in gradeItems) {
+      final gradeItem = raw as Map;
+      final module = gradeItem['itemmodule']?.toString();
+      final instance = _asInt(gradeItem['iteminstance']);
+      if (module == 'assign' && instance == item.id) {
+        return _nonNegativeDouble(gradeItem['graderaw']);
+      }
+    }
+    return null;
+  }
+
+  @visibleForTesting
+  double? parseStudentGradeResponse(Map<String, dynamic> data, int studentId) {
+    final assignments = (data['assignments'] as List?) ?? const [];
+    if (assignments.isEmpty) return null;
+    final grades = ((assignments.first as Map)['grades'] as List?) ?? const [];
+    for (final raw in grades) {
+      final grade = raw as Map;
+      if (_asInt(grade['userid']) == studentId) {
+        final value = grade['grade'];
+        final parsed = value is num
+            ? value.toDouble()
+            : double.tryParse(value?.toString() ?? '');
+        return parsed != null && parsed >= 0 ? parsed : null;
+      }
+    }
+    return null;
+  }
+
   /// Submits a grade for an assignment-as-grade-column via [mod_assign_save_grade].
   ///
   /// Only call this for items returned by [getAssignGradeColumns] (itemType='assign').
   /// [item.id] must be the assignment INSTANCE ID.
-  Future<void> submitGrade({
+  Future<dynamic> submitGrade({
     required String baseUrl,
     required String token,
     required MoodleGradeItem item,
     required int studentId,
     required double grade,
   }) async {
-    await _ws(baseUrl, token, 'mod_assign_save_grade', {
+    return _ws(baseUrl, token, 'mod_assign_save_grade', {
       'assignmentid': '${item.id}',
       'userid': '$studentId',
       'grade': grade.toStringAsFixed(2),
@@ -178,8 +247,25 @@ class MoodleService {
       'addattempt': '0',
       'workflowstate': 'released',
       'applytoall': '0',
-      'plugindata[assignfeedbackcomments_editor][text]': '',
-      'plugindata[assignfeedbackcomments_editor][format]': '1',
+    });
+  }
+
+  Future<dynamic> updateGradebookGrade({
+    required String baseUrl,
+    required String token,
+    required int courseId,
+    required MoodleGradeItem item,
+    required int studentId,
+    required double grade,
+  }) {
+    return _ws(baseUrl, token, 'core_grades_update_grades', {
+      'source': 'answer_scan',
+      'courseid': '$courseId',
+      'component': 'mod_assign',
+      'activityid': '${item.id}',
+      'itemnumber': '${item.itemNumber}',
+      'grades[0][studentid]': '$studentId',
+      'grades[0][grade]': grade.toStringAsFixed(2),
     });
   }
 
@@ -216,6 +302,7 @@ class MoodleService {
     String function, [
     Map<String, String> extra = const {},
   ]) async {
+    _log('Enviando $function: ${jsonEncode(extra)}');
     final resp = await http.post(
       _uri(baseUrl, 'webservice/rest/server.php'),
       body: {
@@ -224,6 +311,10 @@ class MoodleService {
         'wsfunction': function,
         ...extra,
       },
+    );
+    _log(
+      'Resposta $function HTTP ${resp.statusCode}: '
+      '${_abbreviate(resp.body)}',
     );
     _checkStatus(resp);
     final decoded = _decode(resp.body);
@@ -239,13 +330,31 @@ class MoodleService {
     return decoded;
   }
 
+  int? _asInt(dynamic value) =>
+      value is int ? value : int.tryParse(value?.toString() ?? '');
+
+  double? _nonNegativeDouble(dynamic value) {
+    final parsed = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed >= 0 ? parsed : null;
+  }
+
+  String _abbreviate(String value) =>
+      value.length <= 1200 ? value : '${value.substring(0, 1200)}...';
+
+  void _log(String message) {
+    debugPrint('[MoodleService] $message');
+  }
+
   /// Turns Moodle machine error codes into actionable Portuguese messages.
   String _friendlyMessage(String original, String? errorCode) {
     switch (errorCode) {
       case 'accessdenied':
       case 'webserviceaccessexception':
         return 'Função não autorizada no serviço Moodle.\n'
-            'Adicione a função gradeimport_direct_import_grades ao seu '
+            'Adicione gradereport_user_get_grade_items e '
+            'core_grades_update_grades ao seu '
             'Serviço Externo em:\n'
             'Admin → Servidor → Web services → Serviços externos\n'
             'Use o token deste serviço ao conectar.';
@@ -260,8 +369,8 @@ class MoodleService {
         return 'Serviço Moodle não encontrado.\n'
             'Verifique o endereço do servidor nas configurações.';
       case 'invalidfunction':
-        return 'A função gradeimport_direct_import_grades não existe neste '
-            'Moodle ou não foi adicionada ao Serviço Externo.\n'
+        return 'A função necessária para ler ou salvar notas não '
+            'existe neste Moodle ou não foi adicionada ao Serviço Externo.\n'
             'Verifique com o administrador do Moodle.';
       default:
         return errorCode != null ? '$original [$errorCode]' : original;

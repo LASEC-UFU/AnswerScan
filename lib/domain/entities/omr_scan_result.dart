@@ -36,15 +36,15 @@ class OmrScanResult {
   final List<OmrPoint> detectedCorners;
   final String? error;
 
-  AnswerSheet toAnswerSheet() {
-    final answers = List<AnswerOption?>.generate(AnswerSheet.totalQuestions, (
+  AnswerSheet toAnswerSheet({int? questionCount}) {
+    final answers = List<AnswerOption?>.generate(AnswerSheet.maxQuestions, (
       index,
     ) {
       final raw = rawAnswers['${index + 1}'];
       return _parseOption(raw);
     });
 
-    return AnswerSheet(answers);
+    return AnswerSheet(answers, questionCount: questionCount);
   }
 
   bool get requiresReview =>
@@ -65,6 +65,30 @@ class OmrScanResult {
       rawAnswers.values.where((answer) => answer == 'INCERTA').length;
 
   double get perspectiveConfidence => diagnostics['perspectiveConfidence'] ?? 0;
+
+  int get lastResolvedQuestion {
+    for (var question = AnswerSheet.maxQuestions; question >= 1; question--) {
+      if (_isResolvedAnswerLabel(rawAnswers['$question'] ?? '')) {
+        return question;
+      }
+    }
+    return 0;
+  }
+
+  List<int> get answerKeyInvalidQuestions {
+    final last = lastResolvedQuestion;
+    if (last == 0) return const [];
+    return [
+      for (var question = 1; question <= last; question++)
+        if (!_isResolvedAnswerLabel(rawAnswers['$question'] ?? '')) question,
+      for (
+        var question = last + 1;
+        question <= AnswerSheet.maxQuestions;
+        question++
+      )
+        if ((rawAnswers['$question'] ?? 'EM_BRANCO') != 'EM_BRANCO') question,
+    ];
+  }
 
   double get averageConfidence {
     if (confidence.isEmpty) {
@@ -100,10 +124,10 @@ class OmrScanResult {
     }
 
     final buffer = StringBuffer();
-    for (var question = 1; question <= AnswerSheet.totalQuestions; question++) {
+    for (var question = 1; question <= AnswerSheet.maxQuestions; question++) {
       final answer = rawAnswers['$question'] ?? '?';
       buffer.write('$question:$answer');
-      if (question < AnswerSheet.totalQuestions) {
+      if (question < AnswerSheet.maxQuestions) {
         buffer.write('  ');
       }
     }

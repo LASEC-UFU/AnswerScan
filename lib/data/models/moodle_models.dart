@@ -34,6 +34,18 @@ class MoodleStudent {
   );
 }
 
+enum MoodleGradeSource { manual, automatic, unknown }
+
+class MoodleStudentGrade {
+  const MoodleStudentGrade({required this.value, required this.source});
+
+  final double? value;
+  final MoodleGradeSource source;
+
+  bool get exists => value != null;
+  bool get isManual => source == MoodleGradeSource.manual;
+}
+
 class MoodleGradeItem {
   const MoodleGradeItem({
     required this.id,

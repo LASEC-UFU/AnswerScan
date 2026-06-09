@@ -81,6 +81,12 @@ class _AnswerKeyPageState extends State<AnswerKeyPage> {
             ],
             if (session != null) ...[
               const SizedBox(height: 12),
+              LocalStatusBanner(
+                message:
+                    'Quantidade detectada: ${session.result.lastResolvedQuestion} questões. '
+                    'Questões em branco após esta posição serão ignoradas.',
+              ),
+              const SizedBox(height: 12),
               ScanReviewCard(
                 session: session,
                 onAnswerChanged: widget.controller.updateAnswerKey,

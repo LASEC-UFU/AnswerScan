@@ -7,7 +7,7 @@ class GradeExamUseCase {
   }) {
     var correctAnswers = 0;
 
-    for (var index = 0; index < AnswerSheet.totalQuestions; index++) {
+    for (var index = 0; index < answerKey.questionCount; index++) {
       final key = answerKey.answers[index];
       final student = studentSheet.answers[index];
 
@@ -17,7 +17,7 @@ class GradeExamUseCase {
     }
 
     return GradeResult(
-      totalQuestions: AnswerSheet.totalQuestions,
+      totalQuestions: answerKey.questionCount,
       correctAnswers: correctAnswers,
     );
   }

@@ -84,8 +84,8 @@ class MainActivity : FlutterActivity() {
 
                         scanExecutor.execute {
                             try {
-                                val corners = templateScanner.detectMarkersLive(yPlane, width, height, rowStride)
-                                runOnUiThread { result.success(corners) }
+                                val detection = templateScanner.detectMarkersLive(yPlane, width, height, rowStride)
+                                runOnUiThread { result.success(detection) }
                             } catch (e: Exception) {
                                 Log.w(TAG, "detectMarkersLive error: ${e.message}")
                                 runOnUiThread { result.success(null) }
