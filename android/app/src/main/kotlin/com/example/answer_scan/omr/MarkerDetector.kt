@@ -10,10 +10,7 @@ import org.opencv.core.Point
 import org.opencv.core.Rect
 import org.opencv.imgproc.Imgproc
 import kotlin.math.abs
-<<<<<<< HEAD
 import kotlin.math.acos
-=======
->>>>>>> 327850136f79b64941db51433cd9ac42bc3b71a5
 import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.ln
