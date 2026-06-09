@@ -199,7 +199,6 @@ class MarkerDetector {
                         val aspect = meanWidth / meanHeight
                         val widthRatio = max(topWidth, bottomWidth) / max(1.0, min(topWidth, bottomWidth))
                         val heightRatio = max(leftHeight, rightHeight) / max(1.0, min(leftHeight, rightHeight))
-<<<<<<< HEAD
                         val horizontalAngle = oppositeSideAngle(tl.center, tr.center, bl.center, br.center)
                         val verticalAngle = oppositeSideAngle(tl.center, bl.center, tr.center, br.center)
                         if (aspect !in 1.65..4.5 ||
@@ -207,11 +206,6 @@ class MarkerDetector {
                             heightRatio > TemplateConfig.MAX_OPPOSITE_SIDE_RATIO ||
                             horizontalAngle > TemplateConfig.MAX_OPPOSITE_SIDE_ANGLE_DEG ||
                             verticalAngle > TemplateConfig.MAX_OPPOSITE_SIDE_ANGLE_DEG
-=======
-                        if (aspect !in 1.65..4.5 ||
-                            widthRatio > TemplateConfig.MAX_OPPOSITE_SIDE_RATIO ||
-                            heightRatio > TemplateConfig.MAX_OPPOSITE_SIDE_RATIO
->>>>>>> 327850136f79b64941db51433cd9ac42bc3b71a5
                         ) continue
 
                         val polygon = MatOfPoint(tl.center, tr.center, br.center, bl.center)
@@ -251,7 +245,6 @@ class MarkerDetector {
 
     private fun distance(a: Point, b: Point): Double = hypot(a.x - b.x, a.y - b.y)
 
-<<<<<<< HEAD
     private fun oppositeSideAngle(a1: Point, a2: Point, b1: Point, b2: Point): Double {
         val ax = a2.x - a1.x
         val ay = a2.y - a1.y
@@ -263,8 +256,6 @@ class MarkerDetector {
         return Math.toDegrees(acos(cosine))
     }
 
-=======
->>>>>>> 327850136f79b64941db51433cd9ac42bc3b71a5
     private fun selectByCornerRegions(
         candidates: List<MarkerBox>,
         imgW: Int,
