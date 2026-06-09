@@ -201,7 +201,7 @@ class MarkerDetector {
                         val heightRatio = max(leftHeight, rightHeight) / max(1.0, min(leftHeight, rightHeight))
                         val horizontalAngle = oppositeSideAngle(tl.center, tr.center, bl.center, br.center)
                         val verticalAngle = oppositeSideAngle(tl.center, bl.center, tr.center, br.center)
-                        if (aspect !in 1.65..4.5 ||
+                        if (aspect !in 0.85..7.0 ||
                             widthRatio > TemplateConfig.MAX_OPPOSITE_SIDE_RATIO ||
                             heightRatio > TemplateConfig.MAX_OPPOSITE_SIDE_RATIO ||
                             horizontalAngle > TemplateConfig.MAX_OPPOSITE_SIDE_ANGLE_DEG ||

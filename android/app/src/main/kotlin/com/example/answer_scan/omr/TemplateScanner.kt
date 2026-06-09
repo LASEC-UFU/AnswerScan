@@ -10,6 +10,7 @@ import org.opencv.core.Point
 import org.opencv.core.Size
 import org.opencv.imgcodecs.Imgcodecs
 import org.opencv.imgproc.Imgproc
+import org.opencv.core.MatOfPoint
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.min
@@ -41,6 +42,7 @@ class TemplateScanner {
         val warpOtsu     = Mat()
         val warpBinary   = Mat()
         val cleanBinary  = Mat()
+        val correctedPreview = Mat()
 
         try {
             val loaded = Imgcodecs.imread(imagePath)
@@ -104,7 +106,13 @@ class TemplateScanner {
                 )
             }
 
-            val validation = validateTemplate(markers.templateCorners)
+            val geometry = measureGeometry(
+                markers.templateCorners,
+                oriented.width(),
+                oriented.height(),
+                markers.qualityScore,
+            )
+            val validation = validateTemplate(geometry)
             if (validation != null) {
                 return resultMapper.buildError(
                     message = validation.message,
@@ -112,12 +120,19 @@ class TemplateScanner {
                     markersDetected = 4,
                     extraDebug = mapOf(
                         "sharpnessVariance" to sharpnessVariance,
+                        "geometry" to geometry.toDebugMap(),
                     ),
                 )
             }
 
             perspectiveCorrector.warp(blurred, markers.templateCorners, warped)
             val rotated180 = normalizeTemplateOrientation(warped)
+            perspectiveCorrector.warp(oriented, markers.templateCorners, correctedPreview)
+            if (rotated180) {
+                rotateInPlace(correctedPreview, Core.ROTATE_180)
+            }
+            val correctedImagePath = imagePath.replace(Regex("\\.[^.]+$"), "_omr_corrected.jpg")
+            Imgcodecs.imwrite(correctedImagePath, correctedPreview)
 
             // Apply CLAHE again on the warped image: a second pass corrects any
             // residual illumination gradient introduced by the perspective warp itself.
@@ -180,17 +195,24 @@ class TemplateScanner {
                     "warpHeight"        to warped.height(),
                     "rotated180"        to rotated180,
                     "detectionRotation" to (detection?.rotationDegrees ?: 0),
+                    "markerQuality"     to markers.qualityScore,
+                    "geometry"          to geometry.toDebugMap(),
+                    "corners"           to markers.templateCorners.map {
+                        mapOf("x" to it.x, "y" to it.y)
+                    },
                 ),
             )
 
-            return if (debugPath != null) result + mapOf("debugImagePath" to debugPath)
-            else result
+            return result +
+                mapOf("correctedImagePath" to correctedImagePath) +
+                (if (debugPath != null) mapOf("debugImagePath" to debugPath) else emptyMap())
 
         } finally {
             releaseAll(
                 src, oriented, gray, claheGray, blurred,
                 markerBinary, otsuBinary,
                 warped, claheWarped, warpAdaptive, warpOtsu, warpBinary, cleanBinary,
+                correctedPreview,
             )
         }
     }
@@ -400,24 +422,60 @@ class TemplateScanner {
         rotated.release()
     }
 
-    private fun validateTemplate(corners: List<Point>): ValidationFailure? {
-        val topWidth    = distance(corners[0], corners[1])
-        val bottomWidth = distance(corners[2], corners[3])
-        val leftHeight  = distance(corners[0], corners[2])
-        val rightHeight = distance(corners[1], corners[3])
-
-        val widthRatio  = max(topWidth,   bottomWidth) / max(1.0, minOf(topWidth,   bottomWidth))
-        val heightRatio = max(leftHeight, rightHeight) / max(1.0, minOf(leftHeight, rightHeight))
-        if (widthRatio  > TemplateConfig.MAX_OPPOSITE_SIDE_RATIO ||
-            heightRatio > TemplateConfig.MAX_OPPOSITE_SIDE_RATIO
+    private fun validateTemplate(geometry: GeometryDiagnostics): ValidationFailure? {
+        if (geometry.areaFraction < TemplateConfig.MIN_TEMPLATE_AREA_FRAC ||
+            geometry.minSidePx < 30.0
         ) {
             return ValidationFailure(
-                "Perspectiva forte demais. Reenquadre a folha mais de frente.",
+                "Nao foi possivel reconstruir a geometria da folha. Inclua os quatro marcadores na imagem.",
                 "perspective_invalid",
             )
         }
-
         return null
+    }
+
+    private fun measureGeometry(
+        corners: List<Point>,
+        imageWidth: Int,
+        imageHeight: Int,
+        markerQuality: Double,
+    ): GeometryDiagnostics {
+        val topWidth = distance(corners[0], corners[1])
+        val bottomWidth = distance(corners[2], corners[3])
+        val leftHeight = distance(corners[0], corners[2])
+        val rightHeight = distance(corners[1], corners[3])
+        val widthRatio = max(topWidth, bottomWidth) / max(1.0, minOf(topWidth, bottomWidth))
+        val heightRatio = max(leftHeight, rightHeight) / max(1.0, minOf(leftHeight, rightHeight))
+        val horizontalAngle = oppositeSideAngle(corners[0], corners[1], corners[2], corners[3])
+        val verticalAngle = oppositeSideAngle(corners[0], corners[2], corners[1], corners[3])
+        val polygon = MatOfPoint(corners[0], corners[1], corners[3], corners[2])
+        val areaFraction = Imgproc.contourArea(polygon) /
+            (imageWidth.toDouble() * imageHeight.toDouble()).coerceAtLeast(1.0)
+        polygon.release()
+        val distortion = max(widthRatio, heightRatio)
+        val angle = max(horizontalAngle, verticalAngle)
+        val confidence = (
+            (1.0 / distortion).coerceIn(0.0, 1.0) * 0.45 +
+                (1.0 - angle / 90.0).coerceIn(0.0, 1.0) * 0.35 +
+                (areaFraction / 0.25).coerceIn(0.0, 1.0) * 0.15 +
+                markerQuality.coerceIn(0.0, 1.0) * 0.05
+            ).coerceIn(0.0, 1.0)
+        return GeometryDiagnostics(
+            widthRatio, heightRatio, horizontalAngle, verticalAngle,
+            areaFraction, listOf(topWidth, bottomWidth, leftHeight, rightHeight).minOrNull() ?: 0.0,
+            confidence,
+        )
+    }
+
+    private fun oppositeSideAngle(a1: Point, a2: Point, b1: Point, b2: Point): Double {
+        val ax = a2.x - a1.x
+        val ay = a2.y - a1.y
+        val bx = b2.x - b1.x
+        val by = b2.y - b1.y
+        val denominator = kotlin.math.hypot(ax, ay) * kotlin.math.hypot(bx, by)
+        if (denominator <= 0.0) return 180.0
+        val cosine = ((ax * bx + ay * by) / denominator).coerceIn(-1.0, 1.0)
+        return Math.toDegrees(kotlin.math.acos(cosine))
     }
 
     private fun distance(a: Point, b: Point): Double {
@@ -428,6 +486,25 @@ class TemplateScanner {
     private fun releaseAll(vararg mats: Mat) = mats.forEach { it.release() }
 
     private data class ValidationFailure(val message: String, val sheetStatus: String)
+    private data class GeometryDiagnostics(
+        val widthRatio: Double,
+        val heightRatio: Double,
+        val horizontalAngle: Double,
+        val verticalAngle: Double,
+        val areaFraction: Double,
+        val minSidePx: Double,
+        val confidence: Double,
+    ) {
+        fun toDebugMap(): Map<String, Double> = mapOf(
+            "widthRatio" to widthRatio,
+            "heightRatio" to heightRatio,
+            "horizontalAngle" to horizontalAngle,
+            "verticalAngle" to verticalAngle,
+            "areaFraction" to areaFraction,
+            "minSidePx" to minSidePx,
+            "perspectiveConfidence" to confidence,
+        )
+    }
     private data class DetectionOrientation(
         val markers: MarkerDetector.DetectedMarkers,
         val rotationCode: Int?,

@@ -30,6 +30,7 @@ Future<void> main() async {
     repository: repository,
     gradeExamUseCase: useCase,
   );
+  await controller.loadSavedAnswerKey();
 
   final moodleController = MoodleController(
     service: MoodleService(),

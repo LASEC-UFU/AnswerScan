@@ -137,9 +137,13 @@ class ScanResultMapper {
             return QuestionResult(ANSWER_BLANK, confidence, rowScores)
         }
 
-        // Two clearly filled options always invalidate the question, even when
-        // one mark is darker than the other.
-        if (secondScore >= multiThresh) {
+        // A second option only counts as marked when it is both strongly filled
+        // and reasonably close to the primary mark. This rejects printed-border,
+        // shadow and alignment noise that previously caused false multiples.
+        val secondRelativeToBest = secondScore / bestScore.coerceAtLeast(0.001)
+        if (secondScore >= multiThresh &&
+            secondRelativeToBest >= TemplateConfig.MULTIPLE_MIN_RELATIVE
+        ) {
             val confidence = ((bestScore + secondScore) / 2.0).coerceIn(0.0, 1.0)
             return QuestionResult(ANSWER_MULTIPLE, confidence, rowScores)
         }

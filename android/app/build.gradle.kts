@@ -56,4 +56,5 @@ dependencies {
     implementation("org.opencv:opencv:4.9.0")
     // EXIF rotation support for gallery images
     implementation("androidx.exifinterface:exifinterface:1.3.7")
+    testImplementation("junit:junit:4.13.2")
 }

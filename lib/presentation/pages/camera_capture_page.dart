@@ -32,6 +32,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   bool _streamActive = false;
   int _lastDetectionMs = 0;
   bool _processingFrame = false;
+  List<List<double>>? _liveCorners;
+  int _liveFrameWidth = 1;
+  int _liveFrameHeight = 1;
   DeviceOrientation _captureOrientation = DeviceOrientation.portraitUp;
 
   @override
@@ -61,19 +64,24 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
 
       final plane = image.planes[0];
       OmrNativeChannel.detectMarkersLive(
-        yPlane: plane.bytes,
-        width: image.width,
-        height: image.height,
-        rowStride: plane.bytesPerRow,
-      ).then((corners) {
-        if (!mounted) return;
-        setState(() {
-          _markersFound = corners != null;
-          _processingFrame = false;
-        });
-      }).catchError((_) {
-        _processingFrame = false;
-      });
+            yPlane: plane.bytes,
+            width: image.width,
+            height: image.height,
+            rowStride: plane.bytesPerRow,
+          )
+          .then((corners) {
+            if (!mounted) return;
+            setState(() {
+              _markersFound = corners != null;
+              _liveCorners = corners;
+              _liveFrameWidth = image.width;
+              _liveFrameHeight = image.height;
+              _processingFrame = false;
+            });
+          })
+          .catchError((_) {
+            _processingFrame = false;
+          });
     });
   }
 
@@ -132,9 +140,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   }
 
   Widget _buildFullBleedPreview() {
-    return Center(
-      child: CameraPreview(_cameraController),
-    );
+    return Center(child: CameraPreview(_cameraController));
   }
 
   @override
@@ -176,6 +182,13 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
               fit: StackFit.expand,
               children: [
                 _buildFullBleedPreview(),
+                CustomPaint(
+                  painter: _LiveCornersPainter(
+                    corners: _liveCorners,
+                    frameWidth: _liveFrameWidth,
+                    frameHeight: _liveFrameHeight,
+                  ),
+                ),
                 _GuideOverlay(markersFound: _markersFound),
               ],
             ),
@@ -224,6 +237,62 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   }
 }
 
+class _LiveCornersPainter extends CustomPainter {
+  const _LiveCornersPainter({
+    required this.corners,
+    required this.frameWidth,
+    required this.frameHeight,
+  });
+
+  final List<List<double>>? corners;
+  final int frameWidth;
+  final int frameHeight;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final points = corners;
+    if (points == null || points.length != 4) return;
+
+    Offset mapPoint(List<double> point) {
+      if (frameWidth > frameHeight && size.height > size.width) {
+        return Offset(
+          point[1] / frameHeight * size.width,
+          (1 - point[0] / frameWidth) * size.height,
+        );
+      }
+      return Offset(
+        point[0] / frameWidth * size.width,
+        point[1] / frameHeight * size.height,
+      );
+    }
+
+    final mapped = points.map(mapPoint).toList();
+    final path = Path()
+      ..moveTo(mapped[0].dx, mapped[0].dy)
+      ..lineTo(mapped[1].dx, mapped[1].dy)
+      ..lineTo(mapped[3].dx, mapped[3].dy)
+      ..lineTo(mapped[2].dx, mapped[2].dy)
+      ..close();
+    final stroke = Paint()
+      ..color = Colors.greenAccent
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4;
+    canvas.drawPath(path, stroke);
+    final fill = Paint()
+      ..color = Colors.greenAccent
+      ..style = PaintingStyle.fill;
+    for (final point in mapped) {
+      canvas.drawCircle(point, 9, fill);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_LiveCornersPainter oldDelegate) =>
+      oldDelegate.corners != corners ||
+      oldDelegate.frameWidth != frameWidth ||
+      oldDelegate.frameHeight != frameHeight;
+}
+
 class _GuideOverlay extends StatelessWidget {
   const _GuideOverlay({required this.markersFound});
 
@@ -249,9 +318,7 @@ class _GuideOverlay extends StatelessWidget {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                CustomPaint(
-                  painter: _GuidePainter(markersFound: markersFound),
-                ),
+                CustomPaint(painter: _GuidePainter(markersFound: markersFound)),
                 Align(
                   alignment: Alignment.bottomCenter,
                   child: Container(
@@ -304,7 +371,9 @@ class _GuidePainter extends CustomPainter {
       ..color = Colors.black.withValues(alpha: 0.85)
       ..style = PaintingStyle.fill;
     final answerAreaPaint = Paint()
-      ..color = markersFound ? Colors.greenAccent.withValues(alpha: 0.6) : Colors.white70
+      ..color = markersFound
+          ? Colors.greenAccent.withValues(alpha: 0.6)
+          : Colors.white70
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
 

@@ -183,6 +183,19 @@ class _CalibrationPageState extends State<CalibrationPage> {
                       'Confianca media: '
                       '${(result.averageConfidence * 100).toStringAsFixed(0)}%',
                     ),
+                    Text(
+                      'Confianca da perspectiva: '
+                      '${(result.perspectiveConfidence * 100).toStringAsFixed(0)}%',
+                    ),
+                    Text(
+                      'Angulos detectados: '
+                      '${(result.diagnostics['horizontalAngle'] ?? 0).toStringAsFixed(1)} / '
+                      '${(result.diagnostics['verticalAngle'] ?? 0).toStringAsFixed(1)} graus',
+                    ),
+                    Text(
+                      'Qualidade dos cantos: '
+                      '${(result.diagnostics['markerQuality'] ?? 0).toStringAsFixed(3)}',
+                    ),
                     Text('Questoes para revisar: ${result.unresolvedCount}'),
                     if (_imagePath != null)
                       Text('Imagem: ${_basename(_imagePath!)}'),

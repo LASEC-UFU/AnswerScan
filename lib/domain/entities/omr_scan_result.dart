@@ -14,6 +14,9 @@ class OmrScanResult {
     required this.markersDetected,
     required this.perspectiveCorrected,
     this.debugImagePath,
+    this.correctedImagePath,
+    this.diagnostics = const {},
+    this.detectedCorners = const [],
     this.error,
   });
 
@@ -28,6 +31,9 @@ class OmrScanResult {
   final int markersDetected;
   final bool perspectiveCorrected;
   final String? debugImagePath;
+  final String? correctedImagePath;
+  final Map<String, double> diagnostics;
+  final List<OmrPoint> detectedCorners;
   final String? error;
 
   AnswerSheet toAnswerSheet() {
@@ -48,6 +54,17 @@ class OmrScanResult {
 
   int get resolvedCount =>
       rawAnswers.values.where(_isResolvedAnswerLabel).length;
+
+  int get blankCount =>
+      rawAnswers.values.where((answer) => answer == 'EM_BRANCO').length;
+
+  int get multipleCount =>
+      rawAnswers.values.where((answer) => answer == 'MULTIPLA').length;
+
+  int get uncertainCount =>
+      rawAnswers.values.where((answer) => answer == 'INCERTA').length;
+
+  double get perspectiveConfidence => diagnostics['perspectiveConfidence'] ?? 0;
 
   double get averageConfidence {
     if (confidence.isEmpty) {
@@ -102,7 +119,10 @@ class OmrScanResult {
       return OmrScanResult(
         success: false,
         status: raw['status']?.toString() ?? 'ERRO',
-        message: raw['mensagem']?.toString() ?? raw['error']?.toString() ?? 'Falha na leitura',
+        message:
+            raw['mensagem']?.toString() ??
+            raw['error']?.toString() ??
+            'Falha na leitura',
         sheetStatus: raw['sheetStatus']?.toString() ?? 'error',
         rawAnswers: const {},
         confidence: const {},
@@ -110,19 +130,17 @@ class OmrScanResult {
         questionDetails: const {},
         markersDetected: (debug['markersDetected'] as int?) ?? 0,
         perspectiveCorrected: (debug['perspectiveCorrected'] as bool?) ?? false,
+        diagnostics: _parseDiagnostics(debug),
+        detectedCorners: _parseCorners(debug['corners']),
         error: raw['error'] as String? ?? 'Unknown error',
       );
     }
 
     final rawAnswers = questionDetails.isNotEmpty
-        ? questionDetails.map(
-            (key, value) => MapEntry(key, value.answer),
-          )
+        ? questionDetails.map((key, value) => MapEntry(key, value.answer))
         : _parseStringMap(raw['answers']);
     final confidence = questionDetails.isNotEmpty
-        ? questionDetails.map(
-            (key, value) => MapEntry(key, value.confidence),
-          )
+        ? questionDetails.map((key, value) => MapEntry(key, value.confidence))
         : _parseDoubleMap(raw['confidence']);
     final scores = questionDetails.isNotEmpty
         ? questionDetails.map(
@@ -142,6 +160,30 @@ class OmrScanResult {
       markersDetected: (debug['markersDetected'] as int?) ?? 0,
       perspectiveCorrected: (debug['perspectiveCorrected'] as bool?) ?? false,
       debugImagePath: raw['debugImagePath'] as String?,
+      correctedImagePath: raw['correctedImagePath'] as String?,
+      diagnostics: _parseDiagnostics(debug),
+      detectedCorners: _parseCorners(debug['corners']),
+    );
+  }
+
+  OmrScanResult withAnswer(int question, String answer) {
+    final key = '$question';
+    return OmrScanResult(
+      success: success,
+      status: status,
+      message: message,
+      sheetStatus: sheetStatus,
+      rawAnswers: {...rawAnswers, key: answer},
+      confidence: {...confidence, key: 1},
+      scores: scores,
+      questionDetails: questionDetails,
+      markersDetected: markersDetected,
+      perspectiveCorrected: perspectiveCorrected,
+      debugImagePath: debugImagePath,
+      correctedImagePath: correctedImagePath,
+      diagnostics: diagnostics,
+      detectedCorners: detectedCorners,
+      error: error,
     );
   }
 
@@ -199,6 +241,33 @@ class OmrScanResult {
     });
   }
 
+  static List<OmrPoint> _parseCorners(Object? raw) {
+    if (raw is! List) return const [];
+    return raw
+        .map((item) {
+          final point = item as Map<Object?, Object?>;
+          return OmrPoint(
+            x: (point['x'] as num?)?.toDouble() ?? 0,
+            y: (point['y'] as num?)?.toDouble() ?? 0,
+          );
+        })
+        .toList(growable: false);
+  }
+
+  static Map<String, double> _parseDiagnostics(Map<Object?, Object?> debug) {
+    final diagnostics = <String, double>{..._parseDoubleMap(debug['geometry'])};
+    for (final key in [
+      'sharpnessVariance',
+      'noiseFloor',
+      'markerQuality',
+      'detectionRotation',
+    ]) {
+      final value = debug[key];
+      if (value is num) diagnostics[key] = value.toDouble();
+    }
+    return diagnostics;
+  }
+
   static AnswerOption? _parseOption(String? label) {
     switch (label) {
       case 'A':
@@ -228,6 +297,13 @@ class OmrScanResult {
         return false;
     }
   }
+}
+
+class OmrPoint {
+  const OmrPoint({required this.x, required this.y});
+
+  final double x;
+  final double y;
 }
 
 class OmrQuestionDetail {

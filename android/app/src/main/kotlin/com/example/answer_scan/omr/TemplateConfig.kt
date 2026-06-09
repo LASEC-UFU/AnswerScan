@@ -47,7 +47,8 @@ object TemplateConfig {
     // Static thresholds (used as fallback when noiseFloor is unavailable)
     const val BLANK_THRESHOLD    = 0.275
     const val FILL_THRESHOLD     = 0.275
-    const val MULTIPLE_THRESHOLD = 0.55
+    const val MULTIPLE_THRESHOLD = 0.64
+    const val MULTIPLE_MIN_RELATIVE = 0.72
     const val DOMINANCE_DELTA    = 0.118
     const val GAP_RATIO          = 1.20
 
@@ -73,6 +74,7 @@ object TemplateConfig {
     const val MARKER_CORNER_REGION_FRAC = 0.45
 
     const val MIN_SHARPNESS_VARIANCE  = 12.0
-    const val MAX_OPPOSITE_SIDE_RATIO = 1.85
-    const val MAX_OPPOSITE_SIDE_ANGLE_DEG = 18.0
+    const val MAX_OPPOSITE_SIDE_RATIO = 3.20
+    const val MAX_OPPOSITE_SIDE_ANGLE_DEG = 42.0
+    const val MIN_TEMPLATE_AREA_FRAC = 0.025
 }

@@ -32,7 +32,13 @@ void main() {
           },
         },
       },
-      'debug': {'markersDetected': 4, 'perspectiveCorrected': true},
+      'debug': {
+        'markersDetected': 4,
+        'perspectiveCorrected': true,
+        'sharpnessVariance': 55.0,
+        'geometry': {'horizontalAngle': 8.0, 'perspectiveConfidence': 0.86},
+      },
+      'correctedImagePath': '/tmp/corrected.jpg',
     });
 
     expect(result.success, isTrue);
@@ -47,6 +53,9 @@ void main() {
     );
     expect(result.scores['1'], orderedEquals([0.05, 0.04, 0.91, 0.03, 0.04]));
     expect(result.requiresReview, isTrue);
+    expect(result.correctedImagePath, '/tmp/corrected.jpg');
+    expect(result.perspectiveConfidence, closeTo(0.86, 0.0001));
+    expect(result.diagnostics['sharpnessVariance'], 55);
   });
 
   test('questao com multiplas marcacoes e nula para correcao', () {
