@@ -6,7 +6,6 @@ import org.opencv.core.Core
 import org.opencv.core.CvType
 import org.opencv.core.Mat
 import org.opencv.core.MatOfDouble
-import org.opencv.core.MatOfPoint
 import org.opencv.core.Point
 import org.opencv.core.Size
 import org.opencv.imgcodecs.Imgcodecs
@@ -105,15 +104,15 @@ class TemplateScanner {
                 )
             }
 
-            val validation = validateTemplate(
-                markers.templateCorners, oriented.width(), oriented.height(),
-            )
+            val validation = validateTemplate(markers.templateCorners)
             if (validation != null) {
                 return resultMapper.buildError(
                     message = validation.message,
                     sheetStatus = validation.sheetStatus,
                     markersDetected = 4,
-                    extraDebug = mapOf("sharpnessVariance" to sharpnessVariance),
+                    extraDebug = mapOf(
+                        "sharpnessVariance" to sharpnessVariance,
+                    ),
                 )
             }
 
@@ -401,7 +400,7 @@ class TemplateScanner {
         rotated.release()
     }
 
-    private fun validateTemplate(corners: List<Point>, imgW: Int, imgH: Int): ValidationFailure? {
+    private fun validateTemplate(corners: List<Point>): ValidationFailure? {
         val topWidth    = distance(corners[0], corners[1])
         val bottomWidth = distance(corners[2], corners[3])
         val leftHeight  = distance(corners[0], corners[2])
@@ -418,15 +417,6 @@ class TemplateScanner {
             )
         }
 
-        val polygon = MatOfPoint(*corners.toTypedArray())
-        val areaFraction = Imgproc.contourArea(polygon) / (imgW.toDouble() * imgH)
-        polygon.release()
-        if (areaFraction < TemplateConfig.MIN_TEMPLATE_AREA_FRAC) {
-            return ValidationFailure(
-                "Folha pequena ou cortada. Aproxime mais a camera.",
-                "sheet_out_of_frame",
-            )
-        }
         return null
     }
 

@@ -55,13 +55,13 @@ class CorrectionController extends ChangeNotifier {
     );
   }
 
-  void grade() {
+  GradeResult? grade() {
     _errorMessage = null;
 
     if (!canGrade) {
       _errorMessage = 'Leia o gabarito e a folha do aluno antes de corrigir.';
       notifyListeners();
-      return;
+      return null;
     }
 
     _result = _gradeExamUseCase.execute(
@@ -73,6 +73,7 @@ class CorrectionController extends ChangeNotifier {
         '${_result!.totalQuestions} questoes corretas.';
 
     notifyListeners();
+    return _result;
   }
 
   Future<void> _loadSheet({

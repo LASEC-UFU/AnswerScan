@@ -130,7 +130,7 @@ class MoodleService {
           c['name'] == 'enabled' &&
           c['value'] == '1',
     );
-    return !subEnabled('file') && !subEnabled('onlinetext');
+    return grade > 0 || (!subEnabled('file') && !subEnabled('onlinetext'));
   }
 
   Future<List<MoodleStudent>> getStudents({
@@ -143,9 +143,20 @@ class MoodleService {
               'courseid': '$courseId',
             })
             as List<dynamic>;
-    return data
-        .map((e) => MoodleStudent.fromJson(e as Map<String, dynamic>))
-        .toList();
+    final users = data.map((e) => e as Map<String, dynamic>).toList();
+    final hasRoleInformation = users.any(
+      (user) => ((user['roles'] as List?) ?? const []).isNotEmpty,
+    );
+    final candidates = hasRoleInformation
+        ? users.where((user) {
+            final roles = (user['roles'] as List?) ?? const [];
+            return roles.any((role) {
+              final shortname = (role as Map)['shortname']?.toString() ?? '';
+              return shortname == 'student';
+            });
+          })
+        : users;
+    return candidates.map(MoodleStudent.fromJson).toList();
   }
 
   /// Submits a grade for an assignment-as-grade-column via [mod_assign_save_grade].

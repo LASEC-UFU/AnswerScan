@@ -73,7 +73,6 @@ object TemplateConfig {
     const val MARKER_CORNER_REGION_FRAC = 0.45
 
     const val MIN_SHARPNESS_VARIANCE  = 12.0
-    const val MIN_TEMPLATE_AREA_FRAC  = 0.12
     const val MAX_OPPOSITE_SIDE_RATIO = 1.85
     const val MAX_OPPOSITE_SIDE_ANGLE_DEG = 18.0
 }

@@ -137,9 +137,9 @@ class ScanResultMapper {
             return QuestionResult(ANSWER_BLANK, confidence, rowScores)
         }
 
-        if (secondScore >= multiThresh &&
-            gap < TemplateConfig.DOMINANCE_DELTA * 1.5
-        ) {
+        // Two clearly filled options always invalidate the question, even when
+        // one mark is darker than the other.
+        if (secondScore >= multiThresh) {
             val confidence = ((bestScore + secondScore) / 2.0).coerceIn(0.0, 1.0)
             return QuestionResult(ANSWER_MULTIPLE, confidence, rowScores)
         }

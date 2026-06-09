@@ -13,7 +13,7 @@ class MoodleConnectPage extends StatefulWidget {
 }
 
 class _MoodleConnectPageState extends State<MoodleConnectPage> {
-  final _urlCtrl = TextEditingController();
+  final _urlCtrl = TextEditingController(text: 'https://moodle.ufu.br');
   final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _serviceCtrl = TextEditingController(text: 'moodle_mobile_app');

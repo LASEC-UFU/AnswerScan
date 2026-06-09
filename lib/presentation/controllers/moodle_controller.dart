@@ -21,6 +21,7 @@ class MoodleController extends ChangeNotifier {
   MoodleSession? session;
   MoodleCourse? selectedCourse;
   MoodleGradeItem? selectedGradeItem;
+  MoodleStudent? selectedStudent;
   List<MoodleCourse> courses = [];
   List<MoodleGradeItem> gradeItems = [];
   List<MoodleStudent> students = [];
@@ -31,6 +32,7 @@ class MoodleController extends ChangeNotifier {
 
   bool get isFullyConfigured =>
       session != null && selectedCourse != null && selectedGradeItem != null;
+  bool get isReadyToSubmit => isFullyConfigured && selectedStudent != null;
 
   // ── Init ───────────────────────────────────────────────────────────────────
 
@@ -129,6 +131,7 @@ class MoodleController extends ChangeNotifier {
   Future<void> selectCourse(MoodleCourse course) async {
     selectedCourse = course;
     selectedGradeItem = null;
+    selectedStudent = null;
     gradeItems = [];
     notifyListeners();
     await _store.saveCourse(course);
@@ -137,6 +140,7 @@ class MoodleController extends ChangeNotifier {
 
   Future<void> selectGradeItem(MoodleGradeItem item) async {
     selectedGradeItem = item;
+    selectedStudent = null;
     notifyListeners();
     await _store.saveGradeItem(item);
     await _loadStudents();
@@ -146,6 +150,7 @@ class MoodleController extends ChangeNotifier {
   void resetCourseSelection() {
     selectedCourse = null;
     selectedGradeItem = null;
+    selectedStudent = null;
     gradeItems = [];
     notifyListeners();
   }
@@ -153,6 +158,12 @@ class MoodleController extends ChangeNotifier {
   // ── Students ───────────────────────────────────────────────────────────────
 
   Future<void> reloadStudents() => _loadStudents();
+
+  void selectStudent(MoodleStudent? student) {
+    selectedStudent = student;
+    lastSubmitMessage = null;
+    notifyListeners();
+  }
 
   Future<void> _loadStudents() async {
     final s = session;
@@ -205,6 +216,7 @@ class MoodleController extends ChangeNotifier {
     required int studentId,
     required int correctAnswers,
     required int totalQuestions,
+    double? gradeOverride,
   }) async {
     final s = session;
     final item = selectedGradeItem;
@@ -215,7 +227,13 @@ class MoodleController extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final grade = (correctAnswers / totalQuestions) * item.gradeMax;
+      final grade =
+          gradeOverride ?? (correctAnswers / totalQuestions) * item.gradeMax;
+      if (grade < 0 || grade > item.gradeMax) {
+        lastSubmitMessage =
+            'A nota deve estar entre 0 e ${item.gradeMax.toStringAsFixed(2)}.';
+        return false;
+      }
       await _service.submitGrade(
         baseUrl: s.baseUrl,
         token: s.token,
@@ -247,6 +265,7 @@ class MoodleController extends ChangeNotifier {
     courses = [];
     gradeItems = [];
     students = [];
+    selectedStudent = null;
     connectionState = MoodleConnectionState.disconnected;
     notifyListeners();
   }

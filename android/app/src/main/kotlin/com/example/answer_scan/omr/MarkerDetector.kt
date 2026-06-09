@@ -211,7 +211,6 @@ class MarkerDetector {
                         val polygon = MatOfPoint(tl.center, tr.center, br.center, bl.center)
                         val areaFraction = Imgproc.contourArea(polygon) / imageArea
                         polygon.release()
-                        if (areaFraction < TemplateConfig.MIN_TEMPLATE_AREA_FRAC * 0.65) continue
 
                         val markerAreas = group.map { it.bounds.area().toDouble() }
                         val sizeSimilarity = markerAreas.minOrNull()!! / markerAreas.maxOrNull()!!

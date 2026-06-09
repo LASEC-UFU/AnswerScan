@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/omr_capture_guide.dart';
 import '../../data/services/omr_native_channel.dart';
@@ -31,6 +32,7 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   bool _streamActive = false;
   int _lastDetectionMs = 0;
   bool _processingFrame = false;
+  DeviceOrientation _captureOrientation = DeviceOrientation.portraitUp;
 
   @override
   void initState() {
@@ -42,7 +44,9 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       imageFormatGroup: ImageFormatGroup.yuv420,
     );
     _initializeFuture = _cameraController.initialize().then((_) {
-      if (mounted) _startLiveDetection();
+      if (mounted) {
+        _startLiveDetection();
+      }
     });
   }
 
@@ -81,7 +85,26 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
       } catch (_) {}
     }
     _cameraController.dispose();
+    SystemChrome.setPreferredOrientations(const [
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
     super.dispose();
+  }
+
+  Future<void> _toggleOrientation() async {
+    final isLandscape =
+        MediaQuery.of(context).orientation == Orientation.landscape;
+    final target = isLandscape
+        ? DeviceOrientation.portraitUp
+        : DeviceOrientation.landscapeLeft;
+
+    await _cameraController.lockCaptureOrientation(target);
+    await SystemChrome.setPreferredOrientations([target]);
+    if (mounted) {
+      setState(() => _captureOrientation = target);
+    }
   }
 
   Future<void> _capture() async {
@@ -109,31 +132,8 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
   }
 
   Widget _buildFullBleedPreview() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final sensorAspectRatio = _cameraController.value.aspectRatio;
-        final isPortraitLayout = constraints.maxHeight > constraints.maxWidth;
-        final previewAspectRatio =
-            isPortraitLayout ? (1 / sensorAspectRatio) : sensorAspectRatio;
-        final parentAspectRatio = constraints.maxWidth / constraints.maxHeight;
-
-        double width;
-        double height;
-        if (parentAspectRatio > previewAspectRatio) {
-          width = constraints.maxWidth;
-          height = constraints.maxWidth / previewAspectRatio;
-        } else {
-          height = constraints.maxHeight;
-          width = constraints.maxHeight * previewAspectRatio;
-        }
-
-        return OverflowBox(
-          alignment: Alignment.center,
-          maxWidth: width,
-          maxHeight: height,
-          child: CameraPreview(_cameraController),
-        );
-      },
+    return Center(
+      child: CameraPreview(_cameraController),
     );
   }
 
@@ -143,7 +143,22 @@ class _CameraCapturePageState extends State<CameraCapturePage> {
         MediaQuery.of(context).orientation == Orientation.landscape;
 
     return Scaffold(
-      appBar: AppBar(title: Text(widget.title)),
+      appBar: AppBar(
+        title: Text(widget.title),
+        actions: [
+          IconButton(
+            onPressed: _toggleOrientation,
+            tooltip: _captureOrientation == DeviceOrientation.portraitUp
+                ? 'Usar modo paisagem'
+                : 'Usar modo retrato',
+            icon: Icon(
+              _captureOrientation == DeviceOrientation.portraitUp
+                  ? Icons.stay_current_landscape
+                  : Icons.stay_current_portrait,
+            ),
+          ),
+        ],
+      ),
       body: FutureBuilder<void>(
         future: _initializeFuture,
         builder: (context, snapshot) {

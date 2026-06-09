@@ -4,11 +4,11 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../data/models/moodle_models.dart';
 import '../../domain/entities/sheet_scan_session.dart';
 import '../../domain/usecases/grade_exam_usecase.dart';
 import '../controllers/correction_controller.dart';
 import '../controllers/moodle_controller.dart';
-import '../widgets/assign_grade_dialog.dart';
 import 'calibration_page.dart';
 import 'camera_capture_page.dart';
 import 'moodle_connect_page.dart';
@@ -101,14 +101,110 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  void _openAssignGrade(GradeResult result) {
-    showDialog<void>(
-      context: context,
-      builder: (_) => AssignGradeDialog(
-        moodleController: widget.moodleController,
-        result: result,
+  Future<void> _gradeAndSubmit() async {
+    final result = widget.controller.grade();
+    if (result == null || !widget.moodleController.isReadyToSubmit) {
+      return;
+    }
+
+    final student = widget.moodleController.selectedStudent!;
+    final activity = widget.moodleController.selectedGradeItem!;
+    final calculatedGrade =
+        (result.correctAnswers / result.totalQuestions) * activity.gradeMax;
+    final grade = await _reviewGrade(
+      student: student,
+      activity: activity,
+      calculatedGrade: calculatedGrade,
+    );
+    if (grade == null) return;
+
+    final ok = await widget.moodleController.submitGrade(
+      studentId: student.id,
+      correctAnswers: result.correctAnswers,
+      totalQuestions: result.totalQuestions,
+      gradeOverride: grade,
+    );
+    if (ok) {
+      widget.moodleController.selectStudent(null);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'Nota enviada para ${student.fullname}. Selecione o próximo aluno.'
+              : widget.moodleController.lastSubmitMessage ??
+                    'Falha ao enviar nota ao Moodle.',
+        ),
       ),
     );
+  }
+
+  Future<double?> _reviewGrade({
+    required MoodleStudent student,
+    required MoodleGradeItem activity,
+    required double calculatedGrade,
+  }) {
+    final gradeController = TextEditingController(
+      text: calculatedGrade.toStringAsFixed(2).replaceFirst('.', ','),
+    );
+    String? errorText;
+
+    return showDialog<double>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          void submit() {
+            final grade = double.tryParse(
+              gradeController.text.trim().replaceAll(',', '.'),
+            );
+            if (grade == null || grade < 0 || grade > activity.gradeMax) {
+              setDialogState(() {
+                errorText =
+                    'Informe uma nota entre 0 e ${activity.gradeMax.toStringAsFixed(2).replaceFirst('.', ',')}.';
+              });
+              return;
+            }
+            Navigator.of(dialogContext).pop(grade);
+          }
+
+          return AlertDialog(
+            title: const Text('Revisar nota antes do envio'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Aluno: ${student.fullname}'),
+                Text('Atividade: ${activity.name}'),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: gradeController,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: 'Nota a enviar',
+                    suffixText:
+                        '/ ${activity.gradeMax.toStringAsFixed(2).replaceFirst('.', ',')}',
+                    errorText: errorText,
+                    border: const OutlineInputBorder(),
+                  ),
+                  onSubmitted: (_) => submit(),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(onPressed: submit, child: const Text('Enviar nota')),
+            ],
+          );
+        },
+      ),
+    ).whenComplete(gradeController.dispose);
   }
 
   @override
@@ -139,6 +235,10 @@ class _HomePageState extends State<HomePage> {
                     });
                   },
                 ),
+                if (moodle.isFullyConfigured) ...[
+                  const SizedBox(height: 16),
+                  _MoodleSubmissionCard(controller: moodle),
+                ],
                 const SizedBox(height: 16),
                 _ScanActionCard(
                   title: 'Gabarito',
@@ -160,18 +260,18 @@ class _HomePageState extends State<HomePage> {
                 const SizedBox(height: 12),
                 FilledButton.icon(
                   onPressed:
-                      widget.controller.isBusy || !widget.controller.canGrade
+                      widget.controller.isBusy ||
+                          moodle.isSubmitting ||
+                          !widget.controller.canGrade ||
+                          (moodle.isFullyConfigured && !moodle.isReadyToSubmit)
                       ? null
-                      : () {
-                          widget.controller.grade();
-                          final scanResult = widget.controller.result;
-                          if (scanResult != null &&
-                              widget.moodleController.isFullyConfigured) {
-                            _openAssignGrade(scanResult);
-                          }
-                        },
+                      : _gradeAndSubmit,
                   icon: const Icon(Icons.done_all),
-                  label: const Text('Corrigir'),
+                  label: Text(
+                    moodle.isFullyConfigured
+                        ? 'Corrigir e revisar nota'
+                        : 'Corrigir',
+                  ),
                 ),
                 const SizedBox(height: 12),
                 OutlinedButton.icon(
@@ -262,6 +362,144 @@ class _WorkflowCard extends StatelessWidget {
               value: debugMode,
               onChanged: onDebugChanged,
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MoodleSubmissionCard extends StatelessWidget {
+  const _MoodleSubmissionCard({required this.controller});
+
+  final MoodleController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final course = controller.selectedCourse!;
+    final activity = controller.selectedGradeItem!;
+
+    return Card(
+      color: const Color(0xFFE8F5F1),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.school, color: Color(0xFF0D6E5B)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Envio automático ao Moodle',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text('Curso: ${course.fullname}'),
+            Text(
+              'Atividade: ${activity.name} '
+              '(máx. ${activity.gradeMax.toStringAsFixed(0)})',
+            ),
+            const SizedBox(height: 12),
+            Autocomplete<MoodleStudent>(
+              key: ValueKey(
+                '${course.id}-${activity.id}-${controller.selectedStudent?.id}',
+              ),
+              initialValue: TextEditingValue(
+                text: controller.selectedStudent?.fullname ?? '',
+              ),
+              displayStringForOption: (student) => student.fullname,
+              optionsBuilder: (value) {
+                final query = value.text.trim().toLowerCase();
+                if (query.isEmpty) {
+                  return controller.students.take(20);
+                }
+                return controller.students.where(
+                  (student) =>
+                      student.fullname.toLowerCase().contains(query) ||
+                      student.email.toLowerCase().contains(query),
+                );
+              },
+              onSelected: controller.selectStudent,
+              fieldViewBuilder:
+                  (context, textController, focusNode, onSubmitted) {
+                    return TextField(
+                      controller: textController,
+                      focusNode: focusNode,
+                      onChanged: (_) {
+                        if (controller.selectedStudent != null) {
+                          controller.selectStudent(null);
+                        }
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'Aluno desta correção',
+                        hintText: 'Comece a digitar o nome',
+                        prefixIcon: const Icon(Icons.person_search),
+                        suffixIcon: controller.isLoading
+                            ? const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : IconButton(
+                                onPressed: controller.reloadStudents,
+                                icon: const Icon(Icons.refresh),
+                                tooltip: 'Recarregar alunos',
+                              ),
+                        border: const OutlineInputBorder(),
+                      ),
+                    );
+                  },
+              optionsViewBuilder: (context, onSelected, options) {
+                final students = options.toList();
+                return Align(
+                  alignment: Alignment.topLeft,
+                  child: Material(
+                    elevation: 8,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxHeight: 280,
+                        maxWidth: 520,
+                      ),
+                      child: ListView.builder(
+                        padding: EdgeInsets.zero,
+                        shrinkWrap: true,
+                        itemCount: students.length,
+                        itemBuilder: (_, index) {
+                          final student = students[index];
+                          return ListTile(
+                            title: Text(student.fullname),
+                            subtitle: student.email.isEmpty
+                                ? null
+                                : Text(student.email),
+                            onTap: () => onSelected(student),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+            if (controller.selectedStudent != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Selecionado: ${controller.selectedStudent!.fullname}',
+                style: const TextStyle(
+                  color: Color(0xFF0D6E5B),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+            if (controller.lastSubmitMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(controller.lastSubmitMessage!),
+            ],
           ],
         ),
       ),

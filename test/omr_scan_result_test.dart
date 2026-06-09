@@ -32,10 +32,7 @@ void main() {
           },
         },
       },
-      'debug': {
-        'markersDetected': 4,
-        'perspectiveCorrected': true,
-      },
+      'debug': {'markersDetected': 4, 'perspectiveCorrected': true},
     });
 
     expect(result.success, isTrue);
@@ -44,8 +41,38 @@ void main() {
     expect(result.rawAnswers['1'], 'C');
     expect(result.rawAnswers['2'], 'EM_BRANCO');
     expect(result.confidence['1'], closeTo(0.98, 0.0001));
-    expect(result.questionDetails['1']?.fillByOption['C'], closeTo(0.91, 0.0001));
+    expect(
+      result.questionDetails['1']?.fillByOption['C'],
+      closeTo(0.91, 0.0001),
+    );
     expect(result.scores['1'], orderedEquals([0.05, 0.04, 0.91, 0.03, 0.04]));
+    expect(result.requiresReview, isTrue);
+  });
+
+  test('questao com multiplas marcacoes e nula para correcao', () {
+    final result = OmrScanResult.fromMap({
+      'success': true,
+      'status': 'REVISAO_MANUAL',
+      'mensagem': 'Leitura concluida com itens para revisao manual',
+      'sheetStatus': 'review_required',
+      'questoes': {
+        '1': {
+          'resposta': 'MULTIPLA',
+          'confianca': 0.90,
+          'preenchimentos': {
+            'A': 0.92,
+            'B': 0.08,
+            'C': 0.79,
+            'D': 0.04,
+            'E': 0.05,
+          },
+        },
+      },
+      'debug': {'markersDetected': 4, 'perspectiveCorrected': true},
+    });
+
+    expect(result.rawAnswers['1'], 'MULTIPLA');
+    expect(result.toAnswerSheet().answers.first, isNull);
     expect(result.requiresReview, isTrue);
   });
 }
