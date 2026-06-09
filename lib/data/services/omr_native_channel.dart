@@ -85,10 +85,13 @@ class OmrNativeChannel {
       }
       return OmrScanResult(
         success: false,
+        status: 'ERRO',
+        message: e.message ?? e.code,
         sheetStatus: 'platform_error',
         rawAnswers: {},
         confidence: {},
         scores: {},
+        questionDetails: const {},
         markersDetected: 0,
         perspectiveCorrected: false,
         error: e.message ?? e.code,

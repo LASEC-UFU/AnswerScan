@@ -171,6 +171,8 @@ class _CalibrationPageState extends State<CalibrationPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Text('Status OMR: ${result.status}'),
+                    Text('Mensagem: ${result.message}'),
                     Text('Status: ${result.sheetStatus}'),
                     Text('Marcadores detectados: ${result.markersDetected}'),
                     Text(
@@ -229,6 +231,7 @@ class _CalibrationPageState extends State<CalibrationPage> {
                 final question = index + 1;
                 final answer = result.rawAnswers['$question'] ?? '-';
                 final confidence = result.confidence['$question'] ?? 0;
+                final detail = result.questionDetails['$question'];
                 final scores = result.scores['$question'] ?? const [];
 
                 return Card(
@@ -247,7 +250,11 @@ class _CalibrationPageState extends State<CalibrationPage> {
                           'Confianca: ${(confidence * 100).toStringAsFixed(0)}%',
                         ),
                         const SizedBox(height: 6),
-                        Text(_formatScores(scores)),
+                        Text(
+                          detail != null
+                              ? _formatFillMap(detail.fillByOption)
+                              : _formatScores(scores),
+                        ),
                       ],
                     ),
                   ),
@@ -273,6 +280,22 @@ class _CalibrationPageState extends State<CalibrationPage> {
       index++
     ) {
       parts.add('${labels[index]}=${scores[index].toStringAsFixed(3)}');
+    }
+    return parts.join('  ');
+  }
+
+  static String _formatFillMap(Map<String, double> fillByOption) {
+    if (fillByOption.isEmpty) {
+      return 'Sem preenchimentos.';
+    }
+
+    final labels = ['A', 'B', 'C', 'D', 'E'];
+    final parts = <String>[];
+    for (final label in labels) {
+      final value = fillByOption[label];
+      if (value != null) {
+        parts.add('$label=${value.toStringAsFixed(3)}');
+      }
     }
     return parts.join('  ');
   }

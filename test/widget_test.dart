@@ -40,10 +40,13 @@ class _FakeSheetReaderRepository implements SheetReaderRepository {
   }) async {
     return const OmrScanResult(
       success: false,
+      status: 'ERRO',
+      message: 'unused',
       sheetStatus: 'idle',
       rawAnswers: {},
       confidence: {},
       scores: {},
+      questionDetails: {},
       markersDetected: 0,
       perspectiveCorrected: false,
       error: 'unused',

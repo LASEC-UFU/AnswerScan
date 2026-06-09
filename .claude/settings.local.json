@@ -6,7 +6,12 @@
       "Bash(flutter test:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(./gradlew assembleRelease --stacktrace)"
+      "Bash(./gradlew assembleRelease --stacktrace)",
+      "Bash(where gswin64c *)",
+      "Bash(where gs *)",
+      "Bash(where magick *)",
+      "Bash(where pdftoppm *)",
+      "Bash(python3 -c \"import fitz; print\\('pymupdf ok'\\)\")"
     ]
   }
 }

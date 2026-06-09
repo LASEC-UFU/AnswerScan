@@ -1,5 +1,7 @@
 package com.example.answer_scan.omr
 
+import kotlin.math.roundToInt
+
 class GridMapper {
 
     data class CellROI(
@@ -15,53 +17,47 @@ class GridMapper {
         val isEmpty: Boolean get() = width <= 0 || height <= 0
     }
 
-    private val answerX0 = TemplateConfig.LABEL_W
-    private val answerY0 = TemplateConfig.HEADER_H
-    private val cellW = TemplateConfig.CELL_W
-    private val cellH = TemplateConfig.CELL_H
-
-    private val readInsetX =
-        ((cellW * (1.0 - TemplateConfig.CELL_READ_FRAC)) / 2.0).toInt()
-    private val readInsetY =
-        ((cellH * (1.0 - TemplateConfig.CELL_READ_FRAC)) / 2.0).toInt()
-    private val coreInsetX =
-        ((cellW * (1.0 - TemplateConfig.CELL_CORE_FRAC)) / 2.0).toInt()
-    private val coreInsetY =
-        ((cellH * (1.0 - TemplateConfig.CELL_CORE_FRAC)) / 2.0).toInt()
+    private val readHalfX = IntArray(TemplateConfig.N_COLS) { col ->
+        (TemplateConfig.COLUMN_HALF_W_PX[col] * TemplateConfig.CELL_READ_FRAC).roundToInt()
+    }
+    private val readHalfY = IntArray(TemplateConfig.N_ROWS) { row ->
+        (TemplateConfig.ROW_HALF_H_PX[row] * TemplateConfig.CELL_READ_FRAC).roundToInt()
+    }
+    private val coreHalfX = IntArray(TemplateConfig.N_COLS) { col ->
+        (TemplateConfig.COLUMN_HALF_W_PX[col] * TemplateConfig.CELL_CORE_FRAC).roundToInt()
+    }
+    private val coreHalfY = IntArray(TemplateConfig.N_ROWS) { row ->
+        (TemplateConfig.ROW_HALF_H_PX[row] * TemplateConfig.CELL_CORE_FRAC).roundToInt()
+    }
 
     fun getCellROI(col: Int, row: Int): CellROI {
-        val cellX1 = answerX0 + col * cellW
-        val cellY1 = answerY0 + row * cellH
+        val cx = TemplateConfig.COLUMN_CENTERS_PX[col]
+        val cy = TemplateConfig.ROW_CENTERS_PX[row]
         return CellROI(
-            col = col,
-            row = row,
-            x1 = cellX1 + readInsetX,
-            y1 = cellY1 + readInsetY,
-            x2 = cellX1 + cellW - readInsetX,
-            y2 = cellY1 + cellH - readInsetY,
+            col = col, row = row,
+            x1 = cx - readHalfX[col], y1 = cy - readHalfY[row],
+            x2 = cx + readHalfX[col], y2 = cy + readHalfY[row],
         )
     }
 
     fun getCellCoreROI(col: Int, row: Int): CellROI {
-        val cellX1 = answerX0 + col * cellW
-        val cellY1 = answerY0 + row * cellH
+        val cx = TemplateConfig.COLUMN_CENTERS_PX[col]
+        val cy = TemplateConfig.ROW_CENTERS_PX[row]
         return CellROI(
-            col = col,
-            row = row,
-            x1 = cellX1 + coreInsetX,
-            y1 = cellY1 + coreInsetY,
-            x2 = cellX1 + cellW - coreInsetX,
-            y2 = cellY1 + cellH - coreInsetY,
+            col = col, row = row,
+            x1 = cx - coreHalfX[col], y1 = cy - coreHalfY[row],
+            x2 = cx + coreHalfX[col], y2 = cy + coreHalfY[row],
         )
     }
 
     fun getFullCellRect(col: Int, row: Int): CellROI {
-        val x1 = answerX0 + col * cellW
-        val y1 = answerY0 + row * cellH
-        return CellROI(col, row, x1, y1, x1 + cellW, y1 + cellH)
+        val cx = TemplateConfig.COLUMN_CENTERS_PX[col]
+        val cy = TemplateConfig.ROW_CENTERS_PX[row]
+        val hw = TemplateConfig.COLUMN_HALF_W_PX[col]
+        val hh = TemplateConfig.ROW_HALF_H_PX[row]
+        return CellROI(col, row, cx - hw, cy - hh, cx + hw, cy + hh)
     }
 
     fun debugSummary(): String =
-        "GridMapper(answerOrigin=($answerX0,$answerY0), cell=${cellW}x${cellH}, " +
-            "readInset=($readInsetX,$readInsetY), coreInset=($coreInsetX,$coreInsetY))"
+        "GridMapper(center-based: ${TemplateConfig.N_COLS} cols × ${TemplateConfig.N_ROWS} rows)"
 }

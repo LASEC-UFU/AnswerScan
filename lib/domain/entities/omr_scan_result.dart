@@ -4,10 +4,13 @@ import 'answer_sheet.dart';
 class OmrScanResult {
   const OmrScanResult({
     required this.success,
+    required this.status,
+    required this.message,
     required this.sheetStatus,
     required this.rawAnswers,
     required this.confidence,
     required this.scores,
+    required this.questionDetails,
     required this.markersDetected,
     required this.perspectiveCorrected,
     this.debugImagePath,
@@ -15,10 +18,13 @@ class OmrScanResult {
   });
 
   final bool success;
+  final String status;
+  final String message;
   final String sheetStatus;
   final Map<String, String> rawAnswers;
   final Map<String, double> confidence;
   final Map<String, List<double>> scores;
+  final Map<String, OmrQuestionDetail> questionDetails;
   final int markersDetected;
   final bool perspectiveCorrected;
   final String? debugImagePath;
@@ -73,7 +79,7 @@ class OmrScanResult {
 
   String get summary {
     if (!success) {
-      return error ?? 'Scan failed';
+      return error ?? message;
     }
 
     final buffer = StringBuffer();
@@ -90,26 +96,49 @@ class OmrScanResult {
   static OmrScanResult fromMap(Map<Object?, Object?> raw) {
     final success = raw['success'] as bool? ?? false;
     final debug = raw['debug'] as Map<Object?, Object?>? ?? {};
+    final questionDetails = _parseQuestionDetails(raw['questoes']);
 
     if (!success) {
       return OmrScanResult(
         success: false,
+        status: raw['status']?.toString() ?? 'ERRO',
+        message: raw['mensagem']?.toString() ?? raw['error']?.toString() ?? 'Falha na leitura',
         sheetStatus: raw['sheetStatus']?.toString() ?? 'error',
         rawAnswers: const {},
         confidence: const {},
         scores: const {},
+        questionDetails: const {},
         markersDetected: (debug['markersDetected'] as int?) ?? 0,
         perspectiveCorrected: (debug['perspectiveCorrected'] as bool?) ?? false,
         error: raw['error'] as String? ?? 'Unknown error',
       );
     }
 
+    final rawAnswers = questionDetails.isNotEmpty
+        ? questionDetails.map(
+            (key, value) => MapEntry(key, value.answer),
+          )
+        : _parseStringMap(raw['answers']);
+    final confidence = questionDetails.isNotEmpty
+        ? questionDetails.map(
+            (key, value) => MapEntry(key, value.confidence),
+          )
+        : _parseDoubleMap(raw['confidence']);
+    final scores = questionDetails.isNotEmpty
+        ? questionDetails.map(
+            (key, value) => MapEntry(key, value.fillByOption.values.toList()),
+          )
+        : _parseScoresMap(raw['scores']);
+
     return OmrScanResult(
       success: true,
+      status: raw['status']?.toString() ?? 'OK',
+      message: raw['mensagem']?.toString() ?? 'Cartao lido com sucesso',
       sheetStatus: raw['sheetStatus']?.toString() ?? 'ok',
-      rawAnswers: _parseStringMap(raw['answers']),
-      confidence: _parseDoubleMap(raw['confidence']),
-      scores: _parseScoresMap(raw['scores']),
+      rawAnswers: rawAnswers,
+      confidence: confidence,
+      scores: scores,
+      questionDetails: questionDetails,
       markersDetected: (debug['markersDetected'] as int?) ?? 0,
       perspectiveCorrected: (debug['perspectiveCorrected'] as bool?) ?? false,
       debugImagePath: raw['debugImagePath'] as String?,
@@ -150,6 +179,26 @@ class OmrScanResult {
     });
   }
 
+  static Map<String, OmrQuestionDetail> _parseQuestionDetails(Object? raw) {
+    if (raw == null) {
+      return const {};
+    }
+
+    final map = raw as Map<Object?, Object?>;
+    return map.map((key, value) {
+      final entry = value as Map<Object?, Object?>? ?? const {};
+      final fillMap = _parseDoubleMap(entry['preenchimentos']);
+      return MapEntry(
+        key.toString(),
+        OmrQuestionDetail(
+          answer: entry['resposta']?.toString() ?? '',
+          confidence: (entry['confianca'] as num?)?.toDouble() ?? 0,
+          fillByOption: fillMap,
+        ),
+      );
+    });
+  }
+
   static AnswerOption? _parseOption(String? label) {
     switch (label) {
       case 'A':
@@ -179,4 +228,16 @@ class OmrScanResult {
         return false;
     }
   }
+}
+
+class OmrQuestionDetail {
+  const OmrQuestionDetail({
+    required this.answer,
+    required this.confidence,
+    required this.fillByOption,
+  });
+
+  final String answer;
+  final double confidence;
+  final Map<String, double> fillByOption;
 }

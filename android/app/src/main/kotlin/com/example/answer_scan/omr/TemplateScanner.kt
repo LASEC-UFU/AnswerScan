@@ -13,6 +13,7 @@ import org.opencv.imgcodecs.Imgcodecs
 import org.opencv.imgproc.Imgproc
 import kotlin.math.max
 import kotlin.math.pow
+import kotlin.math.min
 
 class TemplateScanner {
 
@@ -31,13 +32,16 @@ class TemplateScanner {
         val src          = Mat()
         val oriented     = Mat()
         val gray         = Mat()
+        val claheGray    = Mat()
         val blurred      = Mat()
         val markerBinary = Mat()
         val otsuBinary   = Mat()
         val warped       = Mat()
+        val claheWarped  = Mat()
         val warpAdaptive = Mat()
         val warpOtsu     = Mat()
         val warpBinary   = Mat()
+        val cleanBinary  = Mat()
 
         try {
             val loaded = Imgcodecs.imread(imagePath)
@@ -49,20 +53,10 @@ class TemplateScanner {
                 )
             }
 
-            // Apply EXIF rotation so OpenCV sees the image right-side-up
             applyExifRotation(imagePath, loaded, oriented)
             loaded.release()
 
-            // If still portrait after EXIF correction, rotate to landscape
-            if (oriented.width() < oriented.height()) {
-                val tmp = Mat()
-                Core.rotate(oriented, tmp, Core.ROTATE_90_CLOCKWISE)
-                tmp.copyTo(oriented)
-                tmp.release()
-            }
-
             Imgproc.cvtColor(oriented, gray, Imgproc.COLOR_BGR2GRAY)
-            Imgproc.GaussianBlur(gray, blurred, Size(5.0, 5.0), 0.0)
 
             val sharpnessVariance = computeSharpnessVariance(gray)
             Log.d(TAG, "Sharpness variance=${"%.2f".format(sharpnessVariance)}")
@@ -75,6 +69,15 @@ class TemplateScanner {
                 )
             }
 
+            // CLAHE normalizes local contrast, making the binary robust against
+            // shadows, spotlight effects, and uneven ambient lighting.
+            val clahe = Imgproc.createCLAHE(
+                TemplateConfig.CLAHE_CLIP_LIMIT,
+                Size(TemplateConfig.CLAHE_TILE_GRID.toDouble(), TemplateConfig.CLAHE_TILE_GRID.toDouble()),
+            )
+            clahe.apply(gray, claheGray)
+            Imgproc.GaussianBlur(claheGray, blurred, Size(5.0, 5.0), 0.0)
+
             Imgproc.adaptiveThreshold(
                 blurred, markerBinary, 255.0,
                 Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 41, 10.0,
@@ -85,7 +88,6 @@ class TemplateScanner {
             )
             Core.bitwise_or(markerBinary, otsuBinary, markerBinary)
 
-            // Try marker detection; if it fails, retry with 180° rotation
             var markers = markerDetector.detect(markerBinary, oriented.width(), oriented.height())
             var flippedForDetection = false
             if (markers == null) {
@@ -95,7 +97,6 @@ class TemplateScanner {
                 markers = markerDetector.detect(rotated180Binary, oriented.width(), oriented.height())
                 rotated180Binary.release()
                 if (markers != null) {
-                    // Rotate the source images 180° to match
                     val tmpOriented = Mat(); Core.rotate(oriented,     tmpOriented, Core.ROTATE_180); tmpOriented.copyTo(oriented);     tmpOriented.release()
                     val tmpBlurred  = Mat(); Core.rotate(blurred,      tmpBlurred,  Core.ROTATE_180); tmpBlurred.copyTo(blurred);       tmpBlurred.release()
                     val tmpBinary   = Mat(); Core.rotate(markerBinary, tmpBinary,   Core.ROTATE_180); tmpBinary.copyTo(markerBinary);   tmpBinary.release()
@@ -127,38 +128,63 @@ class TemplateScanner {
             perspectiveCorrector.warp(blurred, markers.templateCorners, warped)
             val rotated180 = normalizeTemplateOrientation(warped)
 
+            // Apply CLAHE again on the warped image: a second pass corrects any
+            // residual illumination gradient introduced by the perspective warp itself.
+            clahe.apply(warped, claheWarped)
+
+            // Adaptive block size proportional to cell dimensions.
+            // blockSize ≈ half of the smaller cell axis keeps the neighborhood
+            // large enough to span illumination gradients within each cell.
+            val cellMin   = min(TemplateConfig.CELL_W, TemplateConfig.CELL_H)
+            val rawBlock  = cellMin / 2
+            val blockSize = maxOf(if (rawBlock % 2 == 0) rawBlock + 1 else rawBlock, 7)
+
             Imgproc.adaptiveThreshold(
-                warped, warpAdaptive, 255.0,
-                Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 31, 8.0,
+                claheWarped, warpAdaptive, 255.0,
+                Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, blockSize, 7.0,
             )
             Imgproc.threshold(
-                warped, warpOtsu, 0.0, 255.0,
+                claheWarped, warpOtsu, 0.0, 255.0,
                 Imgproc.THRESH_BINARY_INV + Imgproc.THRESH_OTSU,
             )
             Core.bitwise_or(warpAdaptive, warpOtsu, warpBinary)
 
-            val scores    = answerReader.scoreAllCells(warpBinary)
-            val questions = resultMapper.classifyAll(scores)
+            // Morphological opening removes isolated noise pixels (salt noise from
+            // compression artefacts, paper texture, etc.) without erasing real marks.
+            val openKernel = Imgproc.getStructuringElement(
+                Imgproc.MORPH_ELLIPSE,
+                Size(TemplateConfig.MORPH_OPEN_SIZE.toDouble(), TemplateConfig.MORPH_OPEN_SIZE.toDouble()),
+            )
+            Imgproc.morphologyEx(warpBinary, cleanBinary, Imgproc.MORPH_OPEN, openKernel)
+            openKernel.release()
+
+            val (scores, noiseFloor) = answerReader.scoreAllCells(cleanBinary)
+            Log.d(TAG, "Noise floor (P25 cell scores)=${"%.4f".format(noiseFloor)}")
+            val classification = resultMapper.classifyAll(scores, noiseFloor)
 
             val debugPath = if (debug) {
                 debugHelper.generate(
                     oriented        = oriented,
+                    markerBinary    = markerBinary,
                     templateCorners = markers.templateCorners,
                     warped          = warped,
-                    warpBinary      = warpBinary,
+                    warpBinary      = cleanBinary,
                     scores          = scores,
-                    questions       = questions,
+                    questions       = classification.questions,
                     gridMapper      = gridMapper,
                     originalPath    = imagePath,
                 )
             } else null
 
             val result = resultMapper.buildSuccess(
-                questions            = questions,
+                questions            = classification.questions,
                 markersDetected      = 4,
                 perspectiveCorrected = true,
+                thresholds           = classification.thresholds,
                 extraDebug = mapOf(
                     "sharpnessVariance" to sharpnessVariance,
+                    "noiseFloor"        to noiseFloor,
+                    "warpBlockSize"     to blockSize,
                     "warpWidth"         to warped.width(),
                     "warpHeight"        to warped.height(),
                     "rotated180"        to (rotated180 || flippedForDetection),
@@ -170,9 +196,9 @@ class TemplateScanner {
 
         } finally {
             releaseAll(
-                src, oriented, gray, blurred,
+                src, oriented, gray, claheGray, blurred,
                 markerBinary, otsuBinary,
-                warped, warpAdaptive, warpOtsu, warpBinary,
+                warped, claheWarped, warpAdaptive, warpOtsu, warpBinary, cleanBinary,
             )
         }
     }
@@ -194,13 +220,13 @@ class TemplateScanner {
         height: Int,
         rowStride: Int,
     ): List<Double>? {
-        val gray         = Mat()
-        val blurred      = Mat()
-        val adaptive     = Mat()
-        val otsuBin      = Mat()
-        val combined     = Mat()
+        val gray        = Mat()
+        val blurred     = Mat()
+        val claheBlur   = Mat()
+        val adaptive    = Mat()
+        val otsuBin     = Mat()
+        val combined    = Mat()
         try {
-            // Build a grayscale Mat, stripping row padding if present
             if (rowStride == width) {
                 gray.create(height, width, CvType.CV_8UC1)
                 gray.put(0, 0, yPlane)
@@ -214,12 +240,18 @@ class TemplateScanner {
             }
 
             Imgproc.GaussianBlur(gray, blurred, Size(5.0, 5.0), 0.0)
+            val clahe = Imgproc.createCLAHE(
+                TemplateConfig.CLAHE_CLIP_LIMIT,
+                Size(TemplateConfig.CLAHE_TILE_GRID.toDouble(), TemplateConfig.CLAHE_TILE_GRID.toDouble()),
+            )
+            clahe.apply(blurred, claheBlur)
+
             Imgproc.adaptiveThreshold(
-                blurred, adaptive, 255.0,
+                claheBlur, adaptive, 255.0,
                 Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY_INV, 41, 10.0,
             )
             Imgproc.threshold(
-                blurred, otsuBin, 0.0, 255.0,
+                claheBlur, otsuBin, 0.0, 255.0,
                 Imgproc.THRESH_BINARY_INV + Imgproc.THRESH_OTSU,
             )
             Core.bitwise_or(adaptive, otsuBin, combined)
@@ -227,7 +259,7 @@ class TemplateScanner {
             val markers = markerDetector.detect(combined, width, height) ?: return null
             return markers.templateCorners.flatMap { listOf(it.x, it.y) }
         } finally {
-            releaseAll(gray, blurred, adaptive, otsuBin, combined)
+            releaseAll(gray, blurred, claheBlur, adaptive, otsuBin, combined)
         }
     }
 

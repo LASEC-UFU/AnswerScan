@@ -121,7 +121,7 @@ class MarkerDetector {
             contour2f.release()
             approx.release()
 
-            if (approxPoints !in 4..8) {
+            if (approxPoints !in 4..10) {
                 contour.release()
                 continue
             }
@@ -142,38 +142,88 @@ class MarkerDetector {
         }
 
         Log.d(TAG, "Marker candidates: ${candidates.size}")
-        if (candidates.size < 4) {
-            return null
+        if (candidates.size < 4) return null
+
+        // Strategy 1: constrained corner-region search (MARKER_CORNER_REGION_FRAC = 0.45)
+        val byCorner = selectByCornerRegions(candidates, imgW, imgH)
+        if (byCorner != null) {
+            Log.d(TAG, "Markers found via corner-region search")
+            return byCorner
         }
 
-        val topLeft = selectCandidate(candidates, imgW, imgH, Corner.TOP_LEFT)
-        val topRight = selectCandidate(candidates, imgW, imgH, Corner.TOP_RIGHT)
-        val bottomLeft = selectCandidate(candidates, imgW, imgH, Corner.BOTTOM_LEFT)
-        val bottomRight = selectCandidate(candidates, imgW, imgH, Corner.BOTTOM_RIGHT)
+        // Strategy 2: centroid-based quadrant fallback — handles heavy perspective tilt,
+        // off-center framing, and variable zoom where markers exceed the corner region.
+        Log.d(TAG, "Corner search exhausted, trying quadrant fallback")
+        return selectByQuadrants(candidates, imgW, imgH)
+    }
 
-        if (topLeft == null || topRight == null || bottomLeft == null || bottomRight == null) {
-            return null
-        }
+    private fun selectByCornerRegions(
+        candidates: List<MarkerBox>,
+        imgW: Int,
+        imgH: Int,
+    ): DetectedMarkers? = validateAndBuild(
+        selectCandidate(candidates, imgW, imgH, Corner.TOP_LEFT),
+        selectCandidate(candidates, imgW, imgH, Corner.TOP_RIGHT),
+        selectCandidate(candidates, imgW, imgH, Corner.BOTTOM_LEFT),
+        selectCandidate(candidates, imgW, imgH, Corner.BOTTOM_RIGHT),
+    )
 
-        val uniqueCenters = setOf(
-            topLeft.center.x to topLeft.center.y,
-            topRight.center.x to topRight.center.y,
-            bottomLeft.center.x to bottomLeft.center.y,
-            bottomRight.center.x to bottomRight.center.y,
+    /**
+     * Fallback when corner-region search fails.
+     * Computes the centroid of all candidates and partitions them into 4 quadrants,
+     * then picks the best marker per quadrant using corner-proximity scoring.
+     */
+    private fun selectByQuadrants(
+        candidates: List<MarkerBox>,
+        imgW: Int,
+        imgH: Int,
+    ): DetectedMarkers? {
+        if (candidates.size < 4) return null
+
+        val cx = candidates.map { it.center.x }.average()
+        val cy = candidates.map { it.center.y }.average()
+
+        val tlCands = candidates.filter { it.center.x < cx && it.center.y < cy }
+        val trCands = candidates.filter { it.center.x >= cx && it.center.y < cy }
+        val blCands = candidates.filter { it.center.x < cx && it.center.y >= cy }
+        val brCands = candidates.filter { it.center.x >= cx && it.center.y >= cy }
+
+        val maxDist = hypot(imgW.toDouble(), imgH.toDouble()).coerceAtLeast(1.0)
+
+        fun bestFor(group: List<MarkerBox>, tx: Double, ty: Double): MarkerBox? =
+            group.maxByOrNull { box ->
+                val proximity = 1.0 - (hypot(box.center.x - tx, box.center.y - ty) / maxDist)
+                    .coerceIn(0.0, 1.0)
+                proximity * 0.55 + box.density * 0.20 + box.solidity * 0.15 + box.squareness * 0.10
+            }
+
+        return validateAndBuild(
+            bestFor(tlCands, 0.0, 0.0),
+            bestFor(trCands, imgW.toDouble(), 0.0),
+            bestFor(blCands, 0.0, imgH.toDouble()),
+            bestFor(brCands, imgW.toDouble(), imgH.toDouble()),
         )
-        if (uniqueCenters.size != 4) {
-            return null
-        }
+    }
 
-        if (topLeft.center.x >= topRight.center.x ||
-            bottomLeft.center.x >= bottomRight.center.x ||
-            topLeft.center.y >= bottomLeft.center.y ||
-            topRight.center.y >= bottomRight.center.y
-        ) {
-            return null
-        }
+    private fun validateAndBuild(
+        tl: MarkerBox?,
+        tr: MarkerBox?,
+        bl: MarkerBox?,
+        br: MarkerBox?,
+    ): DetectedMarkers? {
+        if (tl == null || tr == null || bl == null || br == null) return null
 
-        return DetectedMarkers(topLeft, topRight, bottomLeft, bottomRight)
+        val unique = setOf(
+            tl.center.x to tl.center.y, tr.center.x to tr.center.y,
+            bl.center.x to bl.center.y, br.center.x to br.center.y,
+        )
+        if (unique.size != 4) return null
+
+        if (tl.center.x >= tr.center.x || bl.center.x >= br.center.x ||
+            tl.center.y >= bl.center.y || tr.center.y >= br.center.y
+        ) return null
+
+        return DetectedMarkers(tl, tr, bl, br)
     }
 
     private fun computeSolidity(contour: MatOfPoint): Double {

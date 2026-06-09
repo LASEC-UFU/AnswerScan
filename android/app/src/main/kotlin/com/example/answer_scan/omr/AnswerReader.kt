@@ -14,7 +14,15 @@ class AnswerReader(private val gridMapper: GridMapper = GridMapper()) {
         val componentDensity: Double,
     )
 
-    fun scoreAllCells(binary: Mat): Array<DoubleArray> {
+    /**
+     * Returns the per-cell fill scores AND the per-sheet noise floor.
+     *
+     * The noise floor is the P25 of all 100 scores (20 cols × 5 rows).
+     * Because ~80% of cells are blank on a typical exam sheet, the 25th-percentile
+     * falls solidly in the blank cluster and provides a reliable per-image estimate
+     * of background density — enabling adaptive classification thresholds downstream.
+     */
+    fun scoreAllCells(binary: Mat): Pair<Array<DoubleArray>, Double> {
         val scores = Array(TemplateConfig.N_COLS) {
             DoubleArray(TemplateConfig.N_ROWS)
         }
@@ -25,7 +33,11 @@ class AnswerReader(private val gridMapper: GridMapper = GridMapper()) {
             }
         }
 
-        return scores
+        val sorted = scores.flatMap { it.toList() }.sorted()
+        val p25Idx = (sorted.size * 0.25).toInt().coerceIn(0, sorted.size - 1)
+        val noiseFloor = sorted[p25Idx].coerceAtLeast(0.005)
+
+        return scores to noiseFloor
     }
 
     fun measureCell(binary: Mat, col: Int, row: Int): CellMeasurement {
